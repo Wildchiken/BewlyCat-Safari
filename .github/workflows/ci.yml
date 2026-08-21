@@ -79,7 +79,7 @@ jobs:
         if: ${{ matrix.os == 'ubuntu-latest' }}
         run: pnpm run knip
 
-      - name: Build Extension
+      - name: Build Chrome Extension
         run: pnpm build
 
       - name: Upload Chrome Extension Zip
@@ -98,3 +98,13 @@ jobs:
         with:
           name: BewlyCat-firefox-extension
           path: extension-firefox
+
+      - name: Build Safari Extension
+        run: pnpm build-safari
+
+      - name: Upload Safari Extension Zip
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == 'lts/*' && github.ref_name == 'main' }}
+        uses: actions/upload-artifact@v4.3.1
+        with:
+          name: BewlyCat-safari-extension
+          path: extension-safari

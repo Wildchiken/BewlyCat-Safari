@@ -1,0 +1,172 @@
+<script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+import { useToast } from 'vue-toastification'
+
+import { useConfirmDialog } from '~/composables/useConfirmDialog'
+import { importSettingsStorage } from '~/composables/useSettingsStorage'
+import { originalSettings, settings } from '~/logic'
+import { applyPendingSettingsMigrations, formatSettingsMigrationConfirmMessage, hasPendingSettingsMigrations } from '~/utils/settingsMigration'
+
+import SettingsItem from '../components/SettingsItem.vue'
+import SettingsItemGroup from '../components/SettingsItemGroup.vue'
+
+const { t } = useI18n()
+const toast = useToast()
+const { confirm: showConfirmDialog } = useConfirmDialog()
+const importSettingsRef = ref<HTMLInputElement>()
+
+function handleImportSettings() {
+  importSettingsRef.value?.click()
+}
+
+function handleImportFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  const selectedFile = input.files?.[0]
+  input.value = ''
+
+  if (!selectedFile)
+    return
+
+  const reader = new FileReader()
+  reader.onload = async () => {
+    try {
+      const importedSettings = JSON.parse(String(reader.result)) as Record<string, unknown>
+      if (!importedSettings || Array.isArray(importedSettings) || typeof importedSettings !== 'object')
+        throw new TypeError('Invalid settings backup')
+
+      if (hasPendingSettingsMigrations(importedSettings)) {
+        const message = formatSettingsMigrationConfirmMessage(
+          importedSettings,
+          t,
+          'settings.maintenance.migrate_legacy_import_confirm',
+        )
+        const shouldMigrate = await showConfirmDialog(message ?? t('settings.maintenance.migrate_legacy_import_confirm'), {
+          title: t('settings.maintenance.migrate_legacy_title'),
+          confirmLabel: t('settings.maintenance.migrate_legacy_action'),
+        })
+        if (shouldMigrate)
+          applyPendingSettingsMigrations(importedSettings)
+      }
+
+      const currentSettings = originalSettings as unknown as Record<string, unknown>
+      const recognizedSettings: Record<string, unknown> = {}
+      let importedCount = 0
+      let ignoredCount = 0
+      Object.entries(importedSettings).forEach(([key, value]) => {
+        if (Object.prototype.hasOwnProperty.call(currentSettings, key)) {
+          recognizedSettings[key] = value
+          importedCount++
+        }
+        else {
+          ignoredCount++
+        }
+      })
+
+      if (importedCount === 0) {
+        toast.warning(t('settings.maintenance.import_no_matches'))
+        return
+      }
+
+      await importSettingsStorage(recognizedSettings)
+
+      toast.success(t('settings.maintenance.import_success', {
+        imported: importedCount,
+        ignored: ignoredCount,
+      }))
+    }
+    catch {
+      toast.error(t('settings.maintenance.import_failed'))
+    }
+  }
+  reader.readAsText(selectedFile)
+}
+
+function handleExportSettings() {
+  const jsonStr = JSON.stringify(settings.value, null, 2)
+  const blob = new Blob([jsonStr], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  const dateTimeStr = new Date().toLocaleString('sv-SE').replace(/[- :]/g, '')
+
+  link.href = url
+  link.download = `bewly-settings-${dateTimeStr}.json`
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+async function handleResetSettings() {
+  if (!await showConfirmDialog(t('settings.reset_settings_confirm')))
+    return
+
+  // 重置时保留用户当前使用的语言
+  const resetSettings = structuredClone(originalSettings)
+  resetSettings.language = settings.value.language
+  settings.value = resetSettings
+}
+</script>
+
+<template>
+  <div>
+    <SettingsItemGroup
+      :title="$t('settings.maintenance.backup_title')"
+      :desc="$t('settings.maintenance.backup_desc')"
+    >
+      <SettingsItem
+        :title="$t('settings.import_settings')"
+        :desc="$t('settings.maintenance.import_desc')"
+        right-width="auto"
+      >
+        <input
+          ref="importSettingsRef"
+          type="file"
+          accept=".json"
+          hidden
+          @change="handleImportFile"
+        >
+        <Button @click="handleImportSettings">
+          <template #left>
+            <div i-uil:import />
+          </template>
+          {{ $t('settings.import_settings') }}
+        </Button>
+      </SettingsItem>
+      <SettingsItem
+        :title="$t('settings.export_settings')"
+        :desc="$t('settings.export_settings_desc')"
+        right-width="auto"
+      >
+        <Button @click="handleExportSettings">
+          <template #left>
+            <div i-uil:export />
+          </template>
+          {{ $t('settings.export_settings') }}
+        </Button>
+      </SettingsItem>
+    </SettingsItemGroup>
+
+    <SettingsItemGroup
+      :title="$t('settings.maintenance.reset_title')"
+      :desc="$t('settings.maintenance.reset_desc')"
+    >
+      <SettingsItem
+        :title="$t('settings.reset_settings')"
+        :desc="$t('settings.maintenance.reset_warning')"
+        :badge="$t('settings.badge_irreversible')"
+        right-width="auto"
+      >
+        <Button class="danger-button" @click="handleResetSettings">
+          <template #left>
+            <i i-mingcute:back-line />
+          </template>
+          {{ $t('settings.reset_settings') }}
+        </Button>
+      </SettingsItem>
+    </SettingsItemGroup>
+  </div>
+</template>
+
+<style lang="scss" scoped>
+.danger-button {
+  color: var(--bew-error-color);
+}
+</style>

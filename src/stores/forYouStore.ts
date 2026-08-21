@@ -1,0 +1,139 @@
+import { defineStore } from 'pinia'
+
+import type { RecommendationMode } from '~/logic'
+import type { Item as AppVideoItem } from '~/models/video/appForYou'
+import type { Item as VideoItem } from '~/models/video/forYou'
+
+// 预处理的显示数据，减少模板中的计算
+export interface VideoCardDisplayData {
+  id: number
+  duration?: number
+  durationStr?: string
+  title: string
+  cover: string
+  author: {
+    name: string
+    authorFace: string
+    followed: boolean
+    mid: number
+  }
+  tag?: string
+  view?: number
+  viewStr?: string
+  danmaku?: number
+  danmakuStr?: string
+  like?: number
+  publishedTimestamp?: number
+  bvid: string
+  cid?: number
+  capsuleText?: string
+  goto?: string
+  param?: string
+  trackId?: string
+  url?: string
+  type?: 'horizontal' | 'vertical' | 'bangumi'
+  threePointV2: any
+}
+
+export interface VideoElement {
+  uniqueId: string
+  item?: VideoItem
+  displayData?: VideoCardDisplayData
+}
+
+export interface AppVideoElement {
+  uniqueId: string
+  item?: AppVideoItem
+  displayData?: VideoCardDisplayData
+}
+
+export interface ForYouState {
+  // 视频列表数据 - 最关键的状态
+  videoList: VideoElement[]
+  appVideoList: AppVideoElement[]
+
+  // 基础页面状态
+  refreshIdx: number
+  webFreshIdx1h?: number
+  webFreshIdx1hTimestamp?: number
+  webFetchRow?: number
+  webRefreshBrush?: number
+  webLoadMoreBrush?: number
+  webUniqId?: string
+  webShowlistGroups?: string[]
+  webLastClicklist?: string[]
+  noMoreContent: boolean
+
+  // 滚动位置
+  scrollTop?: number
+
+  // 是否已初始化
+  isInitialized: boolean
+
+  // 推荐模式，用于避免跨模式恢复旧推荐流
+  recommendationMode?: RecommendationMode
+}
+
+export const useForYouStore = defineStore('forYou', () => {
+  const state = ref<ForYouState>({
+    // 视频列表数据
+    videoList: [],
+    appVideoList: [],
+
+    // 基础页面状态
+    refreshIdx: 1,
+    webFreshIdx1h: 1,
+    webFreshIdx1hTimestamp: Date.now(),
+    webFetchRow: 1,
+    webRefreshBrush: 0,
+    webLoadMoreBrush: 1,
+    webShowlistGroups: [],
+    webLastClicklist: [],
+    noMoreContent: false,
+
+    // 是否已初始化
+    isInitialized: false,
+    recommendationMode: undefined,
+  })
+
+  // 简化的API - 只保存和恢复完整状态
+  const saveCompleteState = (newState: ForYouState) => {
+    state.value = { ...newState }
+  }
+
+  const getCompleteState = (): ForYouState => {
+    return { ...state.value }
+  }
+
+  // 重置状态
+  const resetState = () => {
+    state.value = {
+      videoList: [],
+      appVideoList: [],
+      refreshIdx: 1,
+      webFreshIdx1h: 1,
+      webFreshIdx1hTimestamp: Date.now(),
+      webFetchRow: 1,
+      webRefreshBrush: 0,
+      webLoadMoreBrush: 1,
+      webShowlistGroups: [],
+      webLastClicklist: [],
+      noMoreContent: false,
+      isInitialized: false,
+      recommendationMode: undefined,
+    }
+  }
+
+  // 标记为已初始化
+  const markAsInitialized = () => {
+    state.value.isInitialized = true
+  }
+
+  return {
+    state: readonly(state),
+    saveCompleteState,
+    getCompleteState,
+    resetState,
+    markAsInitialized,
+  }
+})

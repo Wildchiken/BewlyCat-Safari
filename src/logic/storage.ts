@@ -1,0 +1,1174 @@
+import { watch } from 'vue'
+import browser from 'webextension-polyfill'
+
+import { useSettingsStorage } from '~/composables/useSettingsStorage'
+import { useStorageLocal } from '~/composables/useStorageLocal'
+import type { wallpaperItem } from '~/constants/imgs'
+import { DEFAULT_SEARCH_BAR_CHARACTER } from '~/constants/imgs'
+import type { HomeSubPage } from '~/contentScripts/views/Home/types'
+import type { AppPage } from '~/enums/appEnums'
+import { VideoPageTopBarConfig } from '~/enums/appEnums'
+import {
+  MOBILE_LIST_LAYOUT_BREAKPOINT,
+  normalizeListLayoutBreakpoint,
+} from '~/utils/gridLayout'
+
+export const storageDemo = useStorageLocal('webext-demo', 'Storage Demo')
+
+export type { AppAuthTokens } from './appAuthStorage'
+export { appAuthTokens, defaultAppAuthTokens, resetAppAuthTokens } from './appAuthStorage'
+
+export interface NoCookieForYouRecommendationState {
+  showlistGroups: string[]
+  nextFreshIdx: number
+}
+
+export const noCookieForYouRecommendationState = useStorageLocal<NoCookieForYouRecommendationState>(
+  'noCookieForYouRecommendationState',
+  { showlistGroups: [], nextFreshIdx: 1 },
+  { mergeDefaults: true, writeDefaults: false },
+)
+
+export interface MomentsWantedUser {
+  mid: string
+  name: string
+  face: string
+}
+
+/** Bewly 动态页“想看”分组；缓存用户资料以避免每次进入页面重复请求。 */
+export const momentsWantedUsers = useStorageLocal<MomentsWantedUser[]>(
+  'momentsWantedUsers',
+  [],
+  { writeDefaults: false },
+)
+
+/** Bewly 动态页横向栏右侧“固定 UP”；与想看名单独立存储。 */
+export const momentsPinnedUsers = useStorageLocal<MomentsWantedUser[]>(
+  'momentsPinnedUsers',
+  [],
+  { writeDefaults: false },
+)
+
+export const FROSTED_GLASS_BLUR_MIN_PX = 1
+export const FROSTED_GLASS_BLUR_MAX_PX = 20
+
+// 快捷键基础配置接口
+export interface BaseShortcutSetting {
+  key: string
+  enabled: boolean
+}
+
+// 快捷键配置集合接口
+export interface ShortcutsSettings {
+  [key: string]: BaseShortcutSetting | undefined
+  // 扩展快捷键
+  danmuStatus?: BaseShortcutSetting
+  webFullscreen?: BaseShortcutSetting
+  widescreen?: BaseShortcutSetting
+  bewlyWidescreen?: BaseShortcutSetting
+  shortStepBackward?: BaseShortcutSetting // J
+  longStepBackward?: BaseShortcutSetting // Shift+J
+  playPause?: BaseShortcutSetting // K
+  shortStepForward?: BaseShortcutSetting // L
+  longStepForward?: BaseShortcutSetting // Shift+L
+  nextVideoExtended?: BaseShortcutSetting // N (官方使用 ] or ⏩)
+  pip?: BaseShortcutSetting // P
+  turnOffLight?: BaseShortcutSetting // I
+  caption?: BaseShortcutSetting // C
+  increasePlaybackRate?: BaseShortcutSetting // +
+  decreasePlaybackRate?: BaseShortcutSetting // -
+  resetPlaybackRate?: BaseShortcutSetting // 0
+  previousFrame?: BaseShortcutSetting // ,
+  nextFrame?: BaseShortcutSetting // .
+  replay?: BaseShortcutSetting // Shift+Backspace
+
+  // 首页快捷键
+  homeRefresh?: BaseShortcutSetting // R
+
+  // 全屏模式下快捷键
+  increaseVideoSize?: BaseShortcutSetting // Shift++
+  decreaseVideoSize?: BaseShortcutSetting // Shift+-
+  resetVideoSize?: BaseShortcutSetting // Shift+0
+  videoTitle?: BaseShortcutSetting // B
+  videoTime?: BaseShortcutSetting // G
+  clockTime?: BaseShortcutSetting // H
+
+  // 视频页快捷键
+  toggleFollow?: BaseShortcutSetting // Shift+F (默认禁用)
+}
+
+export type VideoCardFontSizeSetting = 'xs' | 'sm' | 'base' | 'lg'
+export type VideoCardLayoutSetting = 'modern' | 'old'
+export type TabsPosition = 'left' | 'center'
+export type TopBarLogoStyle = 'icon' | 'brand'
+export type TopBarStyle = 'default' | 'transparent' | 'frostedGlass'
+export type AutoPlayMode = 'default' | 'autoPlay' | 'autoPlayWithRecommend' | 'pauseAtEnd' | 'loop'
+export type RandomPlayOrder = 'sequential' | 'reverse' | 'random'
+export type DefaultCustomPlayOrder = RandomPlayOrder
+export type CustomPlayOrderContext = 'multipart' | 'collection' | 'watchLater' | 'playlist'
+export type CustomPlayOrderOverride = DefaultCustomPlayOrder | 'inherit'
+export type CustomPlayOrderOverrides = Record<CustomPlayOrderContext, CustomPlayOrderOverride>
+/** 订阅合集「播放全部」起播策略 */
+export type CollectedSeasonPlayAllMode = 'beginning' | 'latest' | 'lastWatched'
+export type DefaultVideoPlayerMode = 'default' | 'webFullscreen' | 'widescreen' | 'bewlyWidescreen'
+export type BewlyWidescreenSidebarPosition = 'left' | 'right'
+export type PlayerDefaultState = 'system' | 'remember' | 'on' | 'off'
+export type VideoAspectRatio = '0:0' | '4:3' | '16:9'
+export type VideoPlayerModeOverride = DefaultVideoPlayerMode | 'inherit'
+export type VideoPlayerModeContext = 'multipart' | 'collection' | 'bangumi' | 'watchLater' | 'playlist'
+export type VideoPlayerModeOverrides = Record<VideoPlayerModeContext, VideoPlayerModeOverride>
+export type RecommendationMode = 'web' | 'app' | 'webNoCookie'
+/**
+ * 评论回复树展示模式：
+ * - lineCollapseMain：线条，收起时折叠父节点本体
+ * - lineKeepMain：线条，收起时保留父节点正文，仅隐藏子回复
+ * - indentOnly：仅缩进，无收起
+ */
+export type CommentReplyTreeMode = 'lineCollapseMain' | 'lineKeepMain' | 'indentOnly'
+export type CommentReplyPaginationMode = 'loadMore' | 'pagination'
+export type MomentsCardOpenMode = 'dialog' | 'newTab' | 'background'
+export type MomentsVideoCardOpenMode = MomentsCardOpenMode | 'inherit' | 'currentTab'
+
+export interface ShadowCurvePoint {
+  position: number
+  opacity: number
+}
+
+// 本地存储配置接口（不同步到云端的配置）
+export interface LocalSettings {
+  // 壁纸相关
+  locallyUploadedWallpaper: wallpaperItem | null
+
+  // 自定义CSS
+  customizeCSS: boolean
+  customizeCSSContent: string
+}
+
+/**
+ * 网格列数配置
+ * 固定的媒体断点，只允许配置每个断点的列数
+ */
+export interface GridColumnsConfig {
+  base: number // 默认列数 (< 640px)
+  sm: number // >= 640px
+  md: number // >= 768px
+  lg: number // >= 1024px
+  xl: number // >= 1280px
+  xxl: number // >= 1536px
+}
+
+// 默认列数配置
+export const defaultGridColumns: GridColumnsConfig = {
+  base: 1,
+  sm: 2,
+  md: 3,
+  lg: 4,
+  xl: 5,
+  xxl: 6,
+}
+
+// 固定的断点宽度（基于 Tailwind CSS 标准断点）
+export const GRID_BREAKPOINTS = {
+  sm: 640,
+  md: 768,
+  lg: 1024,
+  xl: 1280,
+  xxl: 1536,
+} as const
+
+export const videoCardContextMenuKeys = [
+  'notInterested',
+  'notInterestedUploader',
+  'openInNewTab',
+  'openInBackground',
+  'openInNewWindow',
+  'openInCurrentTab',
+  'openInDrawer',
+  'copyVideoLink',
+  'copyCleanVideoLink',
+  'copyBVNumber',
+  'copyAVNumber',
+  'viewOriginalCover',
+  'followUser',
+  'blockUser',
+] as const
+
+export type VideoCardContextMenuKey = typeof videoCardContextMenuKeys[number]
+
+export interface VideoCardContextMenuConfigItem {
+  key: VideoCardContextMenuKey
+  visible: boolean
+}
+
+export const defaultVideoCardContextMenuConfig: VideoCardContextMenuConfigItem[]
+  = videoCardContextMenuKeys.map(key => ({ key, visible: true }))
+
+export interface Settings {
+  touchScreenOptimization: boolean
+  showHomeButtonInTouchMode: boolean
+  openTopBarItemsInBewly: boolean
+  enableGridLayoutSwitcher: boolean
+  enableHorizontalScrolling: boolean
+  showIPLocation: boolean // 添加显示IP归属地设置项
+  showSex: boolean // 添加显示性别设置项
+  showCommentHostTag: boolean // 显示评论回复详情页楼主标识
+  enableCommentReplyTreeDisplay: boolean // 启用评论回复树展示
+  commentReplyTreeMode: CommentReplyTreeMode // 评论回复树展示模式
+  commentReplyPaginationMode: CommentReplyPaginationMode // 评论回复树分页展示模式
+  adjustCommentImageHeight: boolean // 调整评论区图片高度以匹配实际比例
+  hideCommentImageScrollbar: boolean // 评论区图片预览时隐藏页面滚动条
+  enlargeFavoriteDialog: boolean // 视频页收藏夹放大样式增强
+  externalWatchLaterButton: boolean // 稍后再看按钮外置
+
+  // Grid 相关设置
+  gridColumns: GridColumnsConfig
+  autoSwitchListLayout: boolean
+  /** Automatic two-column -> one-column switch threshold in CSS pixels. */
+  autoSwitchListLayoutBreakpoint: number
+  releaseOffscreenVideoCardImages: boolean
+
+  language: string
+  customizeFont: 'default' | 'recommend' | 'custom'
+  fontFamily: string
+  overrideDanmakuFont: boolean
+  removeTheIndentFromChinesePunctuation: boolean
+
+  enableFrostedGlass: boolean
+  frostedGlassBlurIntensity: number
+  /** 分段控件液态滑动指示器；默认关闭以降低切换动画合成成本 */
+  enableLiquidSegmentIndicator: boolean
+  disableShadow: boolean
+
+  enableVideoPreview: boolean
+
+  // Link Opening Behavior
+  videoCardLinkOpenMode: 'drawer' | 'newTab' | 'currentTab' | 'background'
+  topBarLinkOpenMode: 'currentTab' | 'currentTabIfNotHomepage' | 'newTab' | 'background'
+  searchBarLinkOpenMode: 'currentTab' | 'currentTabIfNotHomepage' | 'newTab' | 'background'
+  closeDrawerWithoutPressingEscAgain: boolean
+
+  blockAds: boolean
+  blockTopSearchPageAds: boolean
+  cleanUrlArgument: boolean // 清理URL追踪参数
+
+  // Clean Share Link
+  enableCleanShareLink: boolean
+  cleanShareLinkIncludeTitle: boolean
+  cleanShareLinkRemoveTrackingParams: boolean
+
+  enableVideoCtrlBarOnVideoCard: boolean
+  enableVideoPreviewSwipeSeek: boolean
+  hoverVideoCardDelayed: boolean
+  onlyCoverVideoPreview: boolean
+  showVideoCardAuthorAvatar: boolean
+  showVideoCardAuthorName: boolean
+  showVideoCardVideoTag: boolean
+  showVideoCardRecommendTag: boolean
+  showVideoCardPublishTime: boolean
+  showVideoCardViewCount: boolean
+  showVideoCardDanmakuCount: boolean
+  showVideoCardLikeCount: boolean
+  showVideoCardDuration: boolean
+  showVideoCardWatchLater: boolean
+  showVideoCardMoreButton: boolean
+  showVideoWatchedBadge: boolean
+  videoCardContextMenuConfig: VideoCardContextMenuConfigItem[]
+
+  // Desktop & Dock
+  autoHideTopBar: boolean
+  showLayoutEditButton: boolean
+  videoPageTopBarConfig: VideoPageTopBarConfig
+  topBarStyle: TopBarStyle
+  showTopBarThemeColorGradient: boolean
+  showBewlyOrBiliPageSwitcher: boolean
+  showBewlyOrBiliPageSwitcherOnMorePages: boolean
+  topBarLogoStyle: TopBarLogoStyle
+  topBarIconBadges: 'number' | 'dot' | 'none'
+  showWatchLaterBadge: boolean
+  topBarComponentsConfig: { key: string, visible: boolean, badgeType: 'number' | 'dot' | 'none' }[]
+  topBarPinnedChannels: string[]
+  openNotificationsPageAsDrawer: boolean
+  showLikeNotificationReminder: boolean
+  hideTopBarUserPanelLv6LastLoginLocation: boolean
+  showBCoinReceiveReminder: boolean
+  autoReceiveBCoinCoupon: boolean
+  autoReceiveVipExp: boolean
+  filterArticlesInMoments: boolean
+  originalMomentsShowUserCard: boolean
+  originalMomentsShowLiveList: boolean
+  originalMomentsShowCommunityCenter: boolean
+  originalMomentsShowHotSearch: boolean
+  originalMomentsShowUpList: boolean
+  momentsSidebarShowUserCard: boolean
+  momentsSidebarShowPublish: boolean
+  momentsSidebarShowLive: boolean
+  momentsSidebarShowHotSearch: boolean
+  momentsShowUpList: boolean
+  momentsTabsPosition: TabsPosition
+  momentsEnableLivePreview: boolean
+  momentsEnableVideoPreview: boolean
+  /** Bewly 动态页期望列数；窄屏会自动降列 */
+  momentsGridColumns: '1' | '2'
+  momentsEnableWantedFilter: boolean
+  momentsFilterUpRecommendation: boolean
+  momentsHideChargeExclusive: boolean
+  momentsHideVideoReservation: boolean
+  momentsHideLiveReservation: boolean
+  momentsHideLiveDynamics: boolean
+  /** 过滤普通视频动态（不含合集视频、番剧） */
+  momentsHideVideoDynamics: boolean
+  /** 过滤图文动态 */
+  momentsHideDrawDynamics: boolean
+  /** 过滤合集视频动态 */
+  momentsHideUgcSeasonDynamics: boolean
+  /** 过滤转发动态 */
+  momentsHideForwardDynamics: boolean
+  /** 过滤番剧/追番追剧动态 */
+  momentsHidePgcDynamics: boolean
+  /** 过滤专栏动态 */
+  momentsHideArticleDynamics: boolean
+  /** 根据标题、正文、作者与附加卡片中的关键词过滤动态 */
+  momentsEnableKeywordFilter: boolean
+  /** 逗号分隔的动态屏蔽关键词 */
+  momentsBlockedKeywords: string
+  momentsCardOpenMode: MomentsCardOpenMode
+  /** 视频投稿动态卡片的独立点击行为；inherit 跟随通用动态卡片设置 */
+  momentsVideoCardOpenMode: MomentsVideoCardOpenMode
+
+  alwaysUseDock: boolean
+  autoHideDock: boolean
+  halfHideDock: boolean
+  dockPosition: 'left' | 'right' | 'bottom'
+  dockItemsConfig: { page: AppPage, visible: boolean, openInNewTab: boolean, useOriginalBiliPage: boolean }[]
+  disableDockGlowingEffect: boolean
+  disableLightDarkModeSwitcherOnDock: boolean
+  backToTopAndRefreshButtonsAreSeparated: boolean
+  alwaysShowDockActionsWhenAutoHide: boolean
+  enableUndoRefreshButton: boolean // 添加撤销刷新按钮配置项
+
+  sidebarPosition: 'left' | 'right'
+  autoHideSidebar: boolean
+
+  theme: 'light' | 'dark' | 'auto' | 'scheduled'
+  themeScheduleStart: string
+  themeScheduleEnd: string
+  videoPageDarkMode: boolean
+  themeColor: string
+  darkModeBaseColor: string // 深色模式基准颜色
+  useLinearGradientThemeColorBackground: boolean
+  wallpaperMode: 'buildIn' | 'byUrl'
+  wallpaper: string
+  enableWallpaperMasking: boolean
+  wallpaperMaskOpacity: number
+  wallpaperBlurIntensity: number
+  wallpaperCacheTime: number // URL壁纸缓存时间(小时), 0表示不缓存
+
+  searchPageDarkenOnSearchFocus: boolean
+  searchPageBlurredOnSearchFocus: boolean
+  searchPageLogoColor: 'white' | 'themeColor'
+  searchPageLogoGlow: boolean
+  searchPageShowLogo: boolean
+  searchPageSearchBarFocusCharacter: string
+  individuallySetSearchPageWallpaper: boolean
+  searchPageWallpaperMode: 'buildIn' | 'byUrl'
+  searchPageWallpaper: string
+  searchPageEnableWallpaperMasking: boolean
+  searchPageWallpaperMaskOpacity: number
+  searchPageWallpaperBlurIntensity: number
+  searchPageWallpaperCacheTime: number // URL壁纸缓存时间(小时), 0表示不缓存
+
+  // 热搜功能设置（统一在搜索框聚焦时显示）
+  showHotSearchInTopBar: boolean
+
+  // 搜索推荐功能设置
+  showSearchRecommendation: boolean
+
+  // 搜索历史功能设置
+  enableSearchHistory: boolean
+
+  // 搜索结果页设置
+  usePluginSearchResultsPage: boolean
+  depersonalizeSearchResults: boolean
+  searchResultsPaginationMode: 'scroll' | 'pagination' // 搜索结果分页模式：滚动加载或翻页
+
+  recommendationMode: RecommendationMode
+  autoSwitchRecommendationMode: boolean
+
+  // filter setting
+  showRecommendationFilterRiskWarning: boolean
+  disableFilterForFollowedUser: boolean
+  filterOutVerticalVideos: boolean
+  enableFilterByViewCount: boolean
+  filterByViewCount: number
+  enableFilterByLikeCount: boolean
+  filterByLikeCount: number
+  enableFilterByDuration: boolean
+  filterByDuration: number
+  enableFilterByTitle: boolean
+  filterByTitle: { keyword: string, remark: string }[]
+  enableFilterByUser: boolean
+  filterByUser: { keyword: string, remark: string }[]
+  enableFilterByPublishTime: boolean
+  filterByPublishTime: number // 单位：天
+
+  followingTabShowLivestreamingVideos: boolean
+  followingFilterChargingVideos: boolean // 过滤充电专属视频
+  followingFilterDynamicVideos: boolean // 过滤动态视频
+  useFollowingNewLayout: boolean
+  collectedSeasonPlayAllMode: CollectedSeasonPlayAllMode // 订阅合集「播放全部」起播：开头 / 最新 / 上次观看
+
+  homePageTabVisibilityList: { page: HomeSubPage, visible: boolean }[]
+  homeTabsPosition: TabsPosition
+  alwaysShowTabsOnHomePage: boolean
+  fixedHomeTabsOnHomePage: boolean
+  enableVersionReminder: boolean
+  lastAcknowledgedVersion: string
+  // Title font size for cards (px); when auto is enabled, this is ignored
+  homeAdaptiveTitleFontSize: number
+  // Auto adjust title font size based on grid width
+  homeAdaptiveTitleAutoSize: boolean
+  // Video card title font size token
+  videoCardTitleFontSize: VideoCardFontSizeSetting
+  // Video card author (UP) font size token
+  videoCardAuthorFontSize: VideoCardFontSizeSetting
+  // Video card tag/meta font size token
+  videoCardMetaFontSize: VideoCardFontSizeSetting
+  // Preferred video card layout
+  videoCardLayout: VideoCardLayoutSetting
+  // Video card shadow customization (modern layout only)
+  videoCardShadowCurve: ShadowCurvePoint[]
+  videoCardShadowHeight: number // 1.0-3.0
+  useSearchPageModeOnHomePage: boolean
+  searchPageModeWallpaperFixed: boolean
+  preserveForYouState: boolean
+  rememberNoCookieRecommendationState: boolean
+
+  adaptToOtherPageStyles: boolean
+  enableTopBar: boolean
+  useOriginalBilibiliTopBar: boolean
+  useOriginalBilibiliHomepage: boolean
+  preventMobileRedirect: boolean
+
+  // Video Player
+  defaultVideoPlayerMode: DefaultVideoPlayerMode
+  bewlyWidescreenSidebarPosition: BewlyWidescreenSidebarPosition
+  defaultDanmakuState: PlayerDefaultState
+  defaultCaptionState: PlayerDefaultState
+  lastDanmakuState: boolean
+  lastCaptionState: boolean
+  enableVideoPlayerModeOverrides: boolean // 启用按场景覆盖播放器显示模式
+  videoPlayerModeOverrides: VideoPlayerModeOverrides // 不同播放场景的显示模式覆盖
+  autoExitFullscreenOnEnd: boolean // 全屏播放完毕后自动退出
+  autoExitFullscreenExcludeAutoPlay: boolean // 全屏自动退出时排除自动连播
+  showVerticalVideoZoomButton: boolean // 显示竖屏视频放大按钮
+  showVideoScreenshotButton: boolean // 显示播放器截图按钮
+
+  // 自动连播总开关
+  useBilibiliDefaultAutoPlay: boolean // 使用B站默认自动播放行为（总开关）
+
+  // 分类型自动连播设置
+  autoPlayMultipart: AutoPlayMode // 分P视频自动播放模式
+  autoPlayCollection: AutoPlayMode // 合集视频自动播放模式
+  autoPlayRecommend: AutoPlayMode // 单视频推荐自动播放模式
+  autoPlayWatchLater: AutoPlayMode // 稍后再看自动播放模式
+  autoPlayPlaylist: AutoPlayMode // 收藏列表自动播放模式
+
+  keyboard: boolean
+  shortcuts: ShortcutsSettings
+  videoPlayerScroll: boolean // 添加视频播放器滚动设置
+
+  // 倍速记忆设置
+  rememberPlaybackRate: boolean // 启用倍速记忆功能
+  savedPlaybackRate: number // 记住的倍速值 (0.25-5)
+
+  // 视频比例记忆设置
+  rememberVideoAspectRatio: boolean // 启用视频比例记忆功能
+  savedVideoAspectRatio: VideoAspectRatio | null // 记住的视频比例；首次启用时沿用播放器当前值
+
+  // 自定义播放设置
+  enableRandomPlay: boolean // 启用视频合集自定义播放功能
+  defaultCustomPlayOrder: DefaultCustomPlayOrder // 播放器自定义播放控件的默认选中顺序
+  enableCustomPlayOrderOverrides: boolean // 启用按视频类型覆盖自定义播放默认值
+  customPlayOrderOverrides: CustomPlayOrderOverrides // 不同视频类型的自定义播放默认值覆盖
+  randomPlayMode: 'manual' | 'auto' // 随机播放模式：手动切换或自动启用
+  minVideosForRandom: number // 启用随机播放的最小视频数量
+}
+
+// 本地存储配置默认值
+export const originalLocalSettings: LocalSettings = {
+  locallyUploadedWallpaper: null,
+  customizeCSS: false,
+  customizeCSSContent: '',
+}
+
+export const originalSettings: Settings = {
+  touchScreenOptimization: false,
+  showHomeButtonInTouchMode: true,
+  openTopBarItemsInBewly: true,
+  enableGridLayoutSwitcher: true,
+  enableHorizontalScrolling: false,
+  showIPLocation: true, // 默认启用IP归属地显示
+  showSex: true, // 默认启用性别显示
+  showCommentHostTag: true, // 默认启用楼主标识显示
+  enableCommentReplyTreeDisplay: true, // 默认启用评论回复树展示
+  commentReplyTreeMode: 'lineKeepMain', // 默认：线条树状，收起时保留父节点正文
+  commentReplyPaginationMode: 'loadMore', // 默认累计加载评论回复
+  adjustCommentImageHeight: true, // 默认启用评论图片高度调整
+  hideCommentImageScrollbar: false, // 默认不隐藏评论图片预览时的页面滚动条
+  enlargeFavoriteDialog: false, // 默认关闭收藏夹放大样式
+  externalWatchLaterButton: true, // 默认开启稍后再看按钮外置
+
+  // Grid 相关默认设置
+  gridColumns: { ...defaultGridColumns },
+  autoSwitchListLayout: true,
+  autoSwitchListLayoutBreakpoint: MOBILE_LIST_LAYOUT_BREAKPOINT,
+  releaseOffscreenVideoCardImages: false,
+
+  language: '',
+  customizeFont: 'default',
+  fontFamily: '',
+  overrideDanmakuFont: true,
+  removeTheIndentFromChinesePunctuation: false,
+
+  enableFrostedGlass: false,
+  frostedGlassBlurIntensity: 20,
+  enableLiquidSegmentIndicator: false,
+  disableShadow: false,
+
+  // Link Opening Behavior
+  videoCardLinkOpenMode: 'newTab',
+  topBarLinkOpenMode: 'currentTabIfNotHomepage',
+  searchBarLinkOpenMode: 'currentTabIfNotHomepage',
+  closeDrawerWithoutPressingEscAgain: false,
+
+  blockAds: false,
+  blockTopSearchPageAds: false,
+  cleanUrlArgument: true, // 默认开启清理URL追踪参数
+
+  // Clean Share Link
+  enableCleanShareLink: false,
+  cleanShareLinkIncludeTitle: false,
+  cleanShareLinkRemoveTrackingParams: true,
+
+  enableVideoPreview: true,
+  enableVideoCtrlBarOnVideoCard: false,
+  enableVideoPreviewSwipeSeek: false,
+  hoverVideoCardDelayed: false,
+  onlyCoverVideoPreview: false,
+  showVideoCardAuthorAvatar: true,
+  showVideoCardAuthorName: true,
+  showVideoCardVideoTag: true,
+  showVideoCardRecommendTag: true,
+  showVideoCardPublishTime: true,
+  showVideoCardViewCount: true,
+  showVideoCardDanmakuCount: true,
+  showVideoCardLikeCount: true,
+  showVideoCardDuration: true,
+  showVideoCardWatchLater: true,
+  showVideoCardMoreButton: true,
+  showVideoWatchedBadge: false,
+  videoCardContextMenuConfig: defaultVideoCardContextMenuConfig.map(item => ({ ...item })),
+
+  // Desktop & Dock
+  autoHideTopBar: false,
+  showLayoutEditButton: true,
+  videoPageTopBarConfig: VideoPageTopBarConfig.ShowOnScroll,
+  topBarStyle: 'default',
+  showTopBarThemeColorGradient: true,
+  showBewlyOrBiliPageSwitcher: true,
+  showBewlyOrBiliPageSwitcherOnMorePages: false,
+  topBarLogoStyle: 'icon',
+  topBarIconBadges: 'number',
+  showWatchLaterBadge: false,
+  topBarComponentsConfig: [
+    { key: 'moments', visible: true, badgeType: 'number' },
+    { key: 'favorites', visible: true, badgeType: 'number' },
+    { key: 'history', visible: true, badgeType: 'number' },
+    { key: 'watchLater', visible: true, badgeType: 'number' },
+    { key: 'creatorCenter', visible: true, badgeType: 'none' },
+    { key: 'upload', visible: true, badgeType: 'none' },
+    { key: 'notifications', visible: true, badgeType: 'number' },
+    { key: 'pinnedChannels', visible: true, badgeType: 'none' },
+    { key: 'avatar', visible: true, badgeType: 'none' },
+  ],
+  topBarPinnedChannels: [],
+  openNotificationsPageAsDrawer: true,
+  showLikeNotificationReminder: false,
+  hideTopBarUserPanelLv6LastLoginLocation: false,
+  showBCoinReceiveReminder: true,
+  autoReceiveBCoinCoupon: false,
+  autoReceiveVipExp: false,
+  filterArticlesInMoments: true,
+  originalMomentsShowUserCard: true,
+  originalMomentsShowLiveList: true,
+  originalMomentsShowCommunityCenter: true,
+  originalMomentsShowHotSearch: true,
+  originalMomentsShowUpList: true,
+  momentsSidebarShowUserCard: true,
+  momentsSidebarShowPublish: true,
+  momentsSidebarShowLive: true,
+  momentsSidebarShowHotSearch: true,
+  momentsShowUpList: true,
+  momentsTabsPosition: 'left',
+  momentsEnableLivePreview: true,
+  momentsEnableVideoPreview: true,
+  momentsGridColumns: '2',
+  momentsEnableWantedFilter: true,
+  momentsFilterUpRecommendation: false,
+  momentsHideChargeExclusive: false,
+  momentsHideVideoReservation: false,
+  momentsHideLiveReservation: false,
+  momentsHideLiveDynamics: false,
+  momentsHideVideoDynamics: false,
+  momentsHideDrawDynamics: false,
+  momentsHideUgcSeasonDynamics: false,
+  momentsHideForwardDynamics: false,
+  momentsHidePgcDynamics: false,
+  momentsHideArticleDynamics: false,
+  momentsEnableKeywordFilter: false,
+  momentsBlockedKeywords: '',
+  momentsCardOpenMode: 'dialog',
+  momentsVideoCardOpenMode: 'inherit',
+
+  alwaysUseDock: false,
+  autoHideDock: false,
+  halfHideDock: false,
+  dockPosition: 'right',
+  dockItemsConfig: [],
+  disableDockGlowingEffect: false,
+  disableLightDarkModeSwitcherOnDock: false,
+  backToTopAndRefreshButtonsAreSeparated: true,
+  alwaysShowDockActionsWhenAutoHide: false,
+  enableUndoRefreshButton: true, // 默认开启撤销刷新按钮
+
+  sidebarPosition: 'right',
+  autoHideSidebar: false,
+
+  theme: 'auto',
+  themeScheduleStart: '06:00',
+  themeScheduleEnd: '18:00',
+  videoPageDarkMode: false,
+  themeColor: '#00a1d6',
+  darkModeBaseColor: '#2a2d32', // 默认深色模式基准颜色
+  useLinearGradientThemeColorBackground: false,
+  wallpaperMode: 'buildIn',
+  wallpaper: '',
+  enableWallpaperMasking: false,
+  wallpaperMaskOpacity: 80,
+  wallpaperBlurIntensity: 0,
+  wallpaperCacheTime: 0, // 默认缓存24小时
+
+  searchPageDarkenOnSearchFocus: true,
+  searchPageBlurredOnSearchFocus: false,
+  searchPageLogoColor: 'themeColor',
+  searchPageLogoGlow: true,
+  searchPageShowLogo: true,
+  searchPageSearchBarFocusCharacter: DEFAULT_SEARCH_BAR_CHARACTER,
+  individuallySetSearchPageWallpaper: false,
+  searchPageWallpaperMode: 'buildIn',
+  searchPageWallpaper: '',
+  searchPageEnableWallpaperMasking: false,
+  searchPageWallpaperMaskOpacity: 80,
+  searchPageWallpaperBlurIntensity: 0,
+  searchPageWallpaperCacheTime: 0, // 默认缓存24小时
+
+  // 热搜功能设置（统一在搜索框聚焦时显示）
+  showHotSearchInTopBar: true,
+
+  // 搜索推荐功能设置
+  showSearchRecommendation: false,
+
+  // 搜索历史功能设置
+  enableSearchHistory: true,
+
+  // 搜索结果页设置
+  usePluginSearchResultsPage: true,
+  depersonalizeSearchResults: false,
+  searchResultsPaginationMode: 'scroll', // 默认使用滚动加载
+
+  recommendationMode: 'web',
+  autoSwitchRecommendationMode: true,
+
+  // filter setting
+  showRecommendationFilterRiskWarning: true,
+  disableFilterForFollowedUser: false,
+  filterOutVerticalVideos: false,
+  enableFilterByViewCount: false,
+  filterByViewCount: 10000,
+  enableFilterByLikeCount: false,
+  filterByLikeCount: 1000,
+  enableFilterByDuration: false,
+  filterByDuration: 3600,
+  enableFilterByTitle: false,
+  filterByTitle: [],
+  enableFilterByUser: false,
+  filterByUser: [],
+  enableFilterByPublishTime: false,
+  filterByPublishTime: 30, // 默认30天
+
+  followingTabShowLivestreamingVideos: false,
+  followingFilterChargingVideos: false, // 默认不过滤充电视频
+  followingFilterDynamicVideos: false, // 默认不过滤动态视频
+  useFollowingNewLayout: false, // 默认使用旧布局
+  collectedSeasonPlayAllMode: 'beginning', // 默认从合集开头播放
+
+  homePageTabVisibilityList: [],
+  homeTabsPosition: 'left',
+  alwaysShowTabsOnHomePage: false,
+  fixedHomeTabsOnHomePage: false,
+  enableVersionReminder: true,
+  lastAcknowledgedVersion: '',
+  homeAdaptiveTitleFontSize: 16,
+  homeAdaptiveTitleAutoSize: true,
+  videoCardTitleFontSize: 'base',
+  videoCardAuthorFontSize: 'sm',
+  videoCardMetaFontSize: 'xs',
+  videoCardLayout: 'modern',
+  videoCardShadowCurve: [
+    { position: 0, opacity: 80 },
+    { position: 30, opacity: 70 },
+    { position: 100, opacity: 0 },
+  ],
+  videoCardShadowHeight: 1.0,
+  useSearchPageModeOnHomePage: false,
+  searchPageModeWallpaperFixed: false,
+  preserveForYouState: false,
+  rememberNoCookieRecommendationState: true,
+
+  adaptToOtherPageStyles: true,
+  enableTopBar: true,
+  useOriginalBilibiliTopBar: false,
+  useOriginalBilibiliHomepage: false,
+  preventMobileRedirect: false,
+
+  // Video Player
+  defaultVideoPlayerMode: 'default',
+  bewlyWidescreenSidebarPosition: 'right',
+  defaultDanmakuState: 'system',
+  defaultCaptionState: 'system',
+  lastDanmakuState: true,
+  lastCaptionState: false,
+  enableVideoPlayerModeOverrides: false,
+  videoPlayerModeOverrides: {
+    multipart: 'inherit',
+    collection: 'inherit',
+    bangumi: 'inherit',
+    watchLater: 'inherit',
+    playlist: 'inherit',
+  },
+  autoExitFullscreenOnEnd: false, // 全屏播放完毕后自动退出，默认关闭
+  autoExitFullscreenExcludeAutoPlay: false, // 全屏自动退出时排除自动连播，默认关闭
+  showVerticalVideoZoomButton: true, // 默认显示竖屏视频放大按钮
+  showVideoScreenshotButton: true, // 默认显示播放器截图按钮
+
+  // 自动连播总开关
+  useBilibiliDefaultAutoPlay: true, // 使用B站默认自动播放行为（总开关），默认开启
+
+  // 分类型自动连播设置（总开关关闭时生效）
+  autoPlayMultipart: 'autoPlay', // 分P视频自动播放模式，默认自动连播
+  autoPlayCollection: 'autoPlay', // 合集视频自动播放模式，默认自动连播
+  autoPlayRecommend: 'autoPlay', // 单视频推荐自动播放模式，默认自动连播
+  autoPlayWatchLater: 'autoPlay', // 稍后再看自动播放模式，默认自动连播
+  autoPlayPlaylist: 'autoPlay', // 收藏列表自动播放模式，默认自动连播
+
+  keyboard: true, // 总快捷键开关，默认为 true
+  videoPlayerScroll: true, // 默认开启视频播放器滚动
+  shortcuts: {
+    danmuStatus: { key: 'Shift+D', enabled: true },
+    webFullscreen: { key: 'Shift+W', enabled: true },
+    widescreen: { key: 'T', enabled: true },
+    bewlyWidescreen: { key: 'Shift+T', enabled: true },
+    shortStepBackward: { key: 'J', enabled: true },
+    longStepBackward: { key: 'Shift+J', enabled: true },
+    playPause: { key: 'K', enabled: true }, // 官方有 Space/⏯️，K 作为可选项
+    shortStepForward: { key: 'L', enabled: true },
+    longStepForward: { key: 'Shift+L', enabled: true },
+    pip: { key: 'P', enabled: true },
+    turnOffLight: { key: 'I', enabled: true },
+    caption: { key: 'C', enabled: true },
+    increasePlaybackRate: { key: '+', enabled: true },
+    decreasePlaybackRate: { key: '-', enabled: true },
+    resetPlaybackRate: { key: '0', enabled: true },
+    previousFrame: { key: ',', enabled: true },
+    nextFrame: { key: '.', enabled: true },
+    replay: { key: 'Shift+Backspace', enabled: true },
+    increaseVideoSize: { key: 'Shift++', enabled: true },
+    decreaseVideoSize: { key: 'Shift+-', enabled: true },
+    resetVideoSize: { key: 'Shift+0', enabled: true },
+    videoTitle: { key: 'B', enabled: true },
+    videoTime: { key: 'G', enabled: true },
+    clockTime: { key: 'H', enabled: true },
+    homeRefresh: { key: 'R', enabled: true },
+  },
+
+  // 倍速记忆设置
+  rememberPlaybackRate: false, // 启用倍速记忆功能
+  savedPlaybackRate: 1, // 记住的倍速值 (0.25-5)
+
+  // 视频比例记忆设置
+  rememberVideoAspectRatio: false, // 启用视频比例记忆功能
+  savedVideoAspectRatio: null, // 首次启用时记住播放器当前比例
+
+  // 自定义播放设置
+  enableRandomPlay: false, // 启用视频合集自定义播放功能
+  defaultCustomPlayOrder: 'random', // 默认选中随机播放，但不直接开启自定义播放
+  enableCustomPlayOrderOverrides: false,
+  customPlayOrderOverrides: {
+    multipart: 'inherit',
+    collection: 'inherit',
+    watchLater: 'inherit',
+    playlist: 'inherit',
+  },
+  randomPlayMode: 'manual', // 随机播放模式：手动切换或自动启用
+  minVideosForRandom: 5, // 启用随机播放的最小视频数量
+}
+
+// 本地存储配置（不会同步到云端）
+export const localSettings = useStorageLocal('localSettings', originalLocalSettings, { mergeDefaults: true, writeDefaults: false })
+
+let resolveSettingsReady: (value: Settings) => void = () => {}
+export const settingsReady = new Promise<Settings>((resolve) => {
+  resolveSettingsReady = resolve
+})
+
+export const settings = useSettingsStorage(originalSettings, {
+  onReady: value => resolveSettingsReady(value),
+})
+
+watch(
+  () => settings.value,
+  (value) => {
+    const record = value as Record<string, any>
+
+    Reflect.deleteProperty(record, 'detectCommentShadowBan')
+    Reflect.deleteProperty(record, 'showBewlyOrBiliTopBarSwitcher')
+    Reflect.deleteProperty(record, 'enableHomeGridVirtualization')
+
+    const validTabsPositions: TabsPosition[] = ['left', 'center']
+    if (!validTabsPositions.includes(record.homeTabsPosition))
+      record.homeTabsPosition = originalSettings.homeTabsPosition
+    if (!validTabsPositions.includes(record.momentsTabsPosition))
+      record.momentsTabsPosition = originalSettings.momentsTabsPosition
+
+    // 清理已移除的音量均衡功能设置。
+    for (const field of [
+      'enableVolumeNormalization',
+      'targetVolume',
+      'normalizationStrength',
+      'adaptiveGainSpeed',
+      'voiceGateDb',
+      'volumeNormalizationDebug',
+      'showDockRefreshButton',
+      'showDockBackToTopButton',
+    ])
+      Reflect.deleteProperty(record, field)
+
+    // 旧布尔开关 → 评论回复树展示模式
+    const validCommentReplyTreeModes: CommentReplyTreeMode[] = [
+      'lineCollapseMain',
+      'lineKeepMain',
+      'indentOnly',
+    ]
+    if (typeof record.enableCommentReplyTree === 'boolean') {
+      // 旧版开启对应可收起主评论；关闭则回落到新默认（引导线、不收起主评论）
+      record.commentReplyTreeMode = record.enableCommentReplyTree
+        ? 'lineCollapseMain'
+        : 'lineKeepMain'
+      Reflect.deleteProperty(record, 'enableCommentReplyTree')
+    }
+    if (!validCommentReplyTreeModes.includes(record.commentReplyTreeMode))
+      record.commentReplyTreeMode = originalSettings.commentReplyTreeMode
+
+    const validCommentReplyPaginationModes: CommentReplyPaginationMode[] = ['loadMore', 'pagination']
+    if (!validCommentReplyPaginationModes.includes(record.commentReplyPaginationMode))
+      record.commentReplyPaginationMode = originalSettings.commentReplyPaginationMode
+
+    const validTopBarLogoStyles: TopBarLogoStyle[] = ['icon', 'brand']
+    if (!validTopBarLogoStyles.includes(record.topBarLogoStyle))
+      record.topBarLogoStyle = originalSettings.topBarLogoStyle
+
+    const validTopBarStyles: TopBarStyle[] = ['default', 'transparent', 'frostedGlass']
+    const hasLegacyTopBarStyle = 'alwaysUseTransparentTopBar' in record
+      || 'alwaysUseFrostedGlassTopBar' in record
+      || 'enableTopBarGradient' in record
+    if (hasLegacyTopBarStyle) {
+      record.topBarStyle = record.alwaysUseTransparentTopBar === true
+        ? 'transparent'
+        : record.alwaysUseFrostedGlassTopBar === true
+          ? 'frostedGlass'
+          : originalSettings.topBarStyle
+    }
+    if (record.topBarStyle === 'progressiveFog')
+      record.topBarStyle = 'default'
+    if (!validTopBarStyles.includes(record.topBarStyle))
+      record.topBarStyle = originalSettings.topBarStyle
+    Reflect.deleteProperty(record, 'alwaysUseTransparentTopBar')
+    Reflect.deleteProperty(record, 'alwaysUseFrostedGlassTopBar')
+    Reflect.deleteProperty(record, 'enableTopBarGradient')
+    Reflect.deleteProperty(record, 'independentTopBarVisibility')
+    if (typeof record.enableTopBar !== 'boolean')
+      record.enableTopBar = originalSettings.enableTopBar
+
+    if (typeof record.showLayoutEditButton !== 'boolean')
+      record.showLayoutEditButton = originalSettings.showLayoutEditButton
+
+    if (!Number.isFinite(record.frostedGlassBlurIntensity))
+      record.frostedGlassBlurIntensity = originalSettings.frostedGlassBlurIntensity
+
+    if ('reduceFrostedGlassBlur' in record) {
+      if (record.reduceFrostedGlassBlur === true && record.frostedGlassBlurIntensity === originalSettings.frostedGlassBlurIntensity)
+        record.frostedGlassBlurIntensity = 10
+
+      Reflect.deleteProperty(record, 'reduceFrostedGlassBlur')
+    }
+
+    if (record.frostedGlassBlurIntensity < FROSTED_GLASS_BLUR_MIN_PX)
+      record.frostedGlassBlurIntensity = FROSTED_GLASS_BLUR_MIN_PX
+
+    if (record.frostedGlassBlurIntensity > FROSTED_GLASS_BLUR_MAX_PX)
+      record.frostedGlassBlurIntensity = FROSTED_GLASS_BLUR_MAX_PX
+
+    // Normalize the user-configurable two-column list breakpoint. Older
+    // versions used a fixed 640px threshold and do not have this field.
+    record.autoSwitchListLayoutBreakpoint = normalizeListLayoutBreakpoint(record.autoSwitchListLayoutBreakpoint)
+
+    // 迁移旧的布尔类型自动播放设置到新的 AutoPlayMode 类型
+    const autoPlayFields = ['autoPlayMultipart', 'autoPlayCollection', 'autoPlayRecommend', 'autoPlayWatchLater', 'autoPlayPlaylist'] as const
+
+    // 检查是否存在旧的布尔设置需要迁移
+    const needsMigration = autoPlayFields.some(field => typeof record[field] === 'boolean')
+
+    if (needsMigration) {
+      for (const field of autoPlayFields) {
+        // 只对布尔类型进行迁移，其他类型（包括 'default'）保持不变
+        if (typeof record[field] === 'boolean') {
+          // true -> 'autoPlay', false -> 'pauseAtEnd'
+          record[field] = record[field] ? 'autoPlay' : 'pauseAtEnd'
+        }
+      }
+    }
+
+    // 确保 useBilibiliDefaultAutoPlay 存在（新用户或旧版本升级）
+    if (!('useBilibiliDefaultAutoPlay' in record)) {
+      record.useBilibiliDefaultAutoPlay = true
+    }
+
+    Reflect.deleteProperty(record, 'enableIndependentAutoPlay')
+    Reflect.deleteProperty(record, 'independentAutoPlayStates')
+
+    const legacyRandomPlayOrder = record.randomPlayOrder
+    if (
+      record.customPlayDefaultEnabled === true
+      && (legacyRandomPlayOrder === 'sequential' || legacyRandomPlayOrder === 'reverse' || legacyRandomPlayOrder === 'random')
+    ) {
+      record.defaultCustomPlayOrder = legacyRandomPlayOrder
+    }
+
+    const validDefaultCustomPlayOrders: DefaultCustomPlayOrder[] = ['sequential', 'reverse', 'random']
+    if (!validDefaultCustomPlayOrders.includes(record.defaultCustomPlayOrder))
+      record.defaultCustomPlayOrder = 'random'
+
+    const customPlayOrderContexts: CustomPlayOrderContext[] = ['multipart', 'collection', 'watchLater', 'playlist']
+    const validCustomPlayOrderOverrides: CustomPlayOrderOverride[] = ['inherit', ...validDefaultCustomPlayOrders]
+    const storedCustomPlayOrderOverrides = record.customPlayOrderOverrides
+    const needsCustomPlayOrderOverrideNormalization = !storedCustomPlayOrderOverrides
+      || typeof storedCustomPlayOrderOverrides !== 'object'
+      || customPlayOrderContexts.some(context => !validCustomPlayOrderOverrides.includes(storedCustomPlayOrderOverrides[context]))
+
+    if (needsCustomPlayOrderOverrideNormalization) {
+      record.customPlayOrderOverrides = Object.fromEntries(
+        customPlayOrderContexts.map((context) => {
+          const storedValue = storedCustomPlayOrderOverrides?.[context]
+          return [context, validCustomPlayOrderOverrides.includes(storedValue) ? storedValue : 'inherit']
+        }),
+      ) as CustomPlayOrderOverrides
+    }
+
+    if (typeof record.enableCustomPlayOrderOverrides !== 'boolean')
+      record.enableCustomPlayOrderOverrides = false
+
+    const legacyCustomAutoPlayFields: Array<[keyof Pick<Settings, 'autoPlayMultipart' | 'autoPlayCollection' | 'autoPlayWatchLater' | 'autoPlayPlaylist'>, CustomPlayOrderContext]> = [
+      ['autoPlayMultipart', 'multipart'],
+      ['autoPlayCollection', 'collection'],
+      ['autoPlayWatchLater', 'watchLater'],
+      ['autoPlayPlaylist', 'playlist'],
+    ]
+    let migratedLegacyCustomAutoPlay = false
+
+    for (const [field, context] of legacyCustomAutoPlayFields) {
+      const legacyMode = record[field]
+      const migratedOrder = legacyMode === 'customSequential'
+        ? 'sequential'
+        : legacyMode === 'customReverse'
+          ? 'reverse'
+          : legacyMode === 'customRandom'
+            ? 'random'
+            : null
+
+      if (!migratedOrder)
+        continue
+
+      record.customPlayOrderOverrides[context] = migratedOrder
+      record[field] = 'pauseAtEnd'
+      migratedLegacyCustomAutoPlay = true
+    }
+
+    if (migratedLegacyCustomAutoPlay)
+      record.enableCustomPlayOrderOverrides = true
+
+    const validAutoPlayModes: AutoPlayMode[] = ['default', 'autoPlay', 'autoPlayWithRecommend', 'pauseAtEnd', 'loop']
+    for (const field of autoPlayFields) {
+      if (!validAutoPlayModes.includes(record[field]))
+        record[field] = 'pauseAtEnd'
+    }
+
+    Reflect.deleteProperty(record, 'customPlayDefaultEnabled')
+    Reflect.deleteProperty(record, 'randomPlayOrder')
+
+    if (record.shortcuts?.webFullscreen?.key === 'W')
+      record.shortcuts.webFullscreen.key = originalSettings.shortcuts.webFullscreen?.key
+
+    if (!record.shortcuts?.bewlyWidescreen) {
+      record.shortcuts = {
+        ...record.shortcuts,
+        bewlyWidescreen: { ...originalSettings.shortcuts.bewlyWidescreen },
+      }
+    }
+
+    // 紧凑布局已由卡片元素显示设置替代
+    if (record.videoCardLayout === 'compact')
+      record.videoCardLayout = 'modern'
+
+    if (record.rememberDanmakuState === true)
+      record.defaultDanmakuState = 'remember'
+    if (record.rememberCaptionState === true)
+      record.defaultCaptionState = 'remember'
+    Reflect.deleteProperty(record, 'rememberDanmakuState')
+    Reflect.deleteProperty(record, 'rememberCaptionState')
+
+    const validPlayerDefaultStates: PlayerDefaultState[] = ['system', 'remember', 'on', 'off']
+    if (!validPlayerDefaultStates.includes(record.defaultDanmakuState))
+      record.defaultDanmakuState = originalSettings.defaultDanmakuState
+    if (!validPlayerDefaultStates.includes(record.defaultCaptionState))
+      record.defaultCaptionState = originalSettings.defaultCaptionState
+
+    // 旧开关与新的按场景覆盖语义不同，直接清理并让用户重新设置。
+    Reflect.deleteProperty(record, 'keepCollectionVideoDefaultMode')
+    Reflect.deleteProperty(record, 'keepWatchLaterVideoDefaultMode')
+
+    const modeOverrideContexts: VideoPlayerModeContext[] = ['multipart', 'collection', 'bangumi', 'watchLater', 'playlist']
+    const validModeOverrides: VideoPlayerModeOverride[] = ['inherit', 'default', 'webFullscreen', 'widescreen', 'bewlyWidescreen']
+    const storedModeOverrides = record.videoPlayerModeOverrides
+    const needsModeOverrideNormalization = !storedModeOverrides
+      || typeof storedModeOverrides !== 'object'
+      || modeOverrideContexts.some(context => !validModeOverrides.includes(storedModeOverrides[context]))
+
+    if (needsModeOverrideNormalization) {
+      record.videoPlayerModeOverrides = Object.fromEntries(
+        modeOverrideContexts.map((context) => {
+          const storedValue = storedModeOverrides?.[context]
+          return [context, validModeOverrides.includes(storedValue) ? storedValue : 'inherit']
+        }),
+      ) as VideoPlayerModeOverrides
+    }
+
+    // 动态页不再提供 3 列
+    if (record.momentsGridColumns !== '1' && record.momentsGridColumns !== '2')
+      record.momentsGridColumns = '2'
+
+    // 清理已移除的 NVIDIA RTX 视频增强兼容设置
+    Reflect.deleteProperty(record, 'nvidiaRtxVideoEnhancementCompatibility')
+
+    // 迁移旧的 disableFrostedGlass 到 enableFrostedGlass
+    if ('disableFrostedGlass' in record) {
+      record.enableFrostedGlass = !record.disableFrostedGlass
+
+      // 清理旧的字段
+      Reflect.deleteProperty(record, 'disableFrostedGlass')
+    }
+
+    // 迁移旧的 locallyUploadedWallpaper/customizeCSS/customizeCSSContent 到 localSettings
+    if ('locallyUploadedWallpaper' in record || 'customizeCSS' in record || 'customizeCSSContent' in record) {
+      localSettings.value = {
+        locallyUploadedWallpaper: record.locallyUploadedWallpaper ?? localSettings.value.locallyUploadedWallpaper,
+        customizeCSS: record.customizeCSS ?? localSettings.value.customizeCSS,
+        customizeCSSContent: record.customizeCSSContent ?? localSettings.value.customizeCSSContent,
+      }
+
+      Reflect.deleteProperty(record, 'locallyUploadedWallpaper')
+      Reflect.deleteProperty(record, 'customizeCSS')
+      Reflect.deleteProperty(record, 'customizeCSSContent')
+    }
+
+    // 迁移 gridColumns：从独立存储迁移到 settings
+    // 检查当前值是否有效（不是空对象且包含必需字段）
+    const hasValidGridColumns = record.gridColumns
+      && typeof record.gridColumns === 'object'
+      && 'base' in record.gridColumns
+      && Object.keys(record.gridColumns).length > 0
+
+    // 如果当前值无效，尝试从旧存储迁移
+    if (!hasValidGridColumns) {
+      browser.storage.local.get(['gridColumns']).then((result) => {
+        // 在回调执行时重新读取当前 settings.value，避免使用闭包中过期的 record 引用
+        let migratedGridColumns: GridColumnsConfig = { ...defaultGridColumns }
+
+        if (result.gridColumns) {
+          try {
+            // useStorageLocal 可能直接存储对象，也可能存储 JSON 字符串
+            let oldGridColumns = result.gridColumns
+            if (typeof oldGridColumns === 'string') {
+              oldGridColumns = JSON.parse(oldGridColumns)
+            }
+
+            // 验证数据结构是否正确
+            if (oldGridColumns && typeof oldGridColumns === 'object' && 'base' in oldGridColumns) {
+              migratedGridColumns = oldGridColumns as GridColumnsConfig
+              // 清理旧的独立存储
+              browser.storage.local.remove(['gridColumns'])
+            }
+          }
+          catch {
+            // JSON 解析失败，使用默认值
+          }
+        }
+
+        // 只更新 gridColumns 字段，不覆盖整个 settings
+        settings.value = { ...settings.value, gridColumns: migratedGridColumns }
+      })
+    }
+  },
+  { immediate: true },
+)
+
+void browser.storage.local.remove(['gridBreakpoints']).catch(() => {})
+
+export type GridLayoutType = 'adaptive' | 'twoColumns' | 'oneColumn'
+
+export interface GridLayout {
+  home: GridLayoutType
+}
+
+export const gridLayout = useStorageLocal<GridLayout>('gridLayout', {
+  home: 'adaptive',
+}, { mergeDefaults: true, writeDefaults: false })
+
+export type WatchLaterLayout = 'list' | 'grid'
+
+export const watchLaterLayout = useStorageLocal<WatchLaterLayout>(
+  'watchLaterLayout',
+  'list',
+  { mergeDefaults: true, writeDefaults: false },
+)
+
+export const gridColumns = useStorageLocal<GridColumnsConfig>(
+  'gridColumns',
+  { ...defaultGridColumns },
+  { mergeDefaults: true, writeDefaults: false },
+)
+
+export const sidePanel = useStorageLocal<{
+  home: boolean
+}>('sidePanel', {
+  home: true,
+}, { mergeDefaults: true, writeDefaults: false })

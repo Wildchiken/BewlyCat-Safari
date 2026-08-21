@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+    paths-ignore:
+      - LICENSE
+      - README-cmn_CN.md
+      - README-cmn_TW.md
+      - docs/**
+
+  pull_request:
+    branches:
+      - dev
+      - main
+    paths-ignore:
+      - LICENSE
+      - README-cmn_CN.md
+      - README-cmn_TW.md
+      - docs/**
+
+jobs:
+  pr-policy:
+    name: PR policy
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check protected files and third-party dependencies
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node .github/scripts/pr-policy-check.mjs
+
+  test:
+    name: Test
+    strategy:
+      matrix:
+        node: [lts/*]
+        os: [ubuntu-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: |
+            - args: [--frozen-lockfile]
+
+      - name: Lint
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: pnpm run lint
+
+      - name: Type check
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: pnpm run typecheck
+
+      - name: Knip
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: pnpm run knip
+
+      - name: Build Extension
+        run: pnpm build
+
+      - name: Upload Chrome Extension Zip
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == 'lts/*' && github.ref_name == 'main' }}
+        uses: actions/upload-artifact@v4.3.1
+        with:
+          name: BewlyCat-chrome-extension
+          path: extension
+
+      - name: Build Firefox Extension
+        run: pnpm build-firefox
+
+      - name: Upload Firefox Extension Zip
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == 'lts/*' && github.ref_name == 'main' }}
+        uses: actions/upload-artifact@v4.3.1
+        with:
+          name: BewlyCat-firefox-extension
+          path: extension-firefox

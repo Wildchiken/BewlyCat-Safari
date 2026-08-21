@@ -1,0 +1,14 @@
+allowBuilds:
+  '@parcel/watcher': true
+  esbuild: true
+  oxc-resolver: true
+  simple-git-hooks: true
+  spawn-sync: true
+onlyBuiltDependencies:
+  - '@parcel/watcher'
+  - dtrace-provider
+  - esbuild
+  - oxc-resolver
+  - simple-git-hooks
+  - spawn-sync
+  - vue-demi

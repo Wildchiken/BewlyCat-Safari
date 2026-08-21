@@ -1,0 +1,313 @@
+.homePage.bewly-custom-homepage .bili-header > .bili-header__channel,
+.homePage.bewly-custom-homepage .bili-header > .bewly-bili-channel-panel {
+  display: none !important;
+}
+
+.homePage.bewly-custom-homepage .header-channel {
+  display: none !important;
+}
+
+.homePage .bili-header {
+  .bewly-bili-logo-entry,
+  .bewly-home-entry-arrow {
+    display: none;
+  }
+}
+
+// 对齐 1.6.8 / B 站原生 slide-down：浅色白底、暗色深灰，不套 elevated-solid，不强制图标纯黑。
+// 文字/图标色交给 B 站 .slide-down 默认样式；滚动后频道布局靠 .bewly-original-top-bar-scrolled。
+.homePage.bewly-custom-homepage:not(.remove-top-bar) .bili-header > .bili-header__bar,
+.homePage:not(.remove-top-bar) .bili-header.bewly-original-top-bar-scrolled > .bili-header__bar {
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  background-color: #fff !important;
+  backdrop-filter: none;
+}
+
+.dark.homePage.bewly-custom-homepage:not(.remove-top-bar) .bili-header > .bili-header__bar,
+.dark.homePage:not(.remove-top-bar) .bili-header.bewly-original-top-bar-scrolled > .bili-header__bar {
+  background-color: rgb(36 38 40) !important;
+}
+
+// 自定义首页原版顶栏：首屏与滚动后都显示 B 站自己的宽 Logo（与插件 Logo 设置无关）
+.homePage.bewly-custom-homepage:not(.remove-top-bar) .bili-header {
+  .bewly-bili-logo-entry {
+    display: flex;
+    align-items: center;
+    margin-right: 16px;
+
+    a {
+      display: flex;
+      align-items: center;
+      height: var(--bew-top-bar-height);
+    }
+
+    img {
+      display: block;
+      // 接近 B 站原生 slide-down 宽标比例
+      width: 88px;
+      max-height: 42px;
+      height: auto;
+      object-fit: contain;
+    }
+  }
+
+  .entry-title {
+    gap: 8px;
+    margin-right: var(--bew-space-4);
+
+    .zhuzhan-icon {
+      display: none;
+    }
+  }
+}
+
+.homePage:not(.remove-top-bar) .bili-header.bewly-original-top-bar-scrolled {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+
+  // 非自定义首页滚动态：同样显示宽 Logo
+  .bewly-bili-logo-entry {
+    display: flex;
+    align-items: center;
+    margin-right: 16px;
+
+    a {
+      display: flex;
+      align-items: center;
+      height: var(--bew-top-bar-height);
+    }
+
+    img {
+      display: block;
+      width: 88px;
+      max-height: 42px;
+      height: auto;
+      object-fit: contain;
+    }
+  }
+
+  .entry-title {
+    gap: 8px;
+    margin-right: var(--bew-space-4);
+
+    .zhuzhan-icon {
+      display: none;
+    }
+  }
+
+  .bewly-home-entry-arrow {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: translateY(-2px) rotate(45deg);
+    transition: transform 0.3s;
+
+    &.arrow-up {
+      transform: translateY(2px) rotate(225deg);
+    }
+  }
+
+  .mini-header__arrow {
+    transition: transform 0.3s;
+
+    &.arrow-up {
+      transform: rotate(180deg);
+    }
+  }
+}
+
+.homePage:not(.remove-top-bar)
+  .bili-header.bewly-original-top-bar-scrolled
+  .v-popover:is(.bewly-original-native-channel-open, .bewly-original-native-channel-closing) {
+  display: block !important;
+}
+
+.homePage:not(.remove-top-bar)
+  .bili-header.bewly-original-top-bar-scrolled
+  .v-popover.bewly-original-native-channel-open {
+  animation: bewly-bili-channel-panel-enter 0.3s;
+}
+
+.homePage:not(.remove-top-bar)
+  .bili-header.bewly-original-top-bar-scrolled
+  .v-popover.bewly-original-native-channel-closing {
+  animation: bewly-bili-channel-panel-leave 0.3s forwards;
+  pointer-events: none;
+}
+
+.homePage:not(.remove-top-bar)
+  .bili-header.bewly-original-top-bar-scrolled:is(.bewly-original-channel-open, .bewly-original-channel-closing) {
+  > .bewly-bili-channel-panel {
+    display: flex !important;
+    position: fixed !important;
+    top: var(--bew-top-bar-height) !important;
+    left: 24px !important;
+    width: max-content;
+    max-width: calc(100vw - 48px);
+    z-index: 1003 !important;
+    padding: 16px 0;
+    overflow-x: auto;
+    border-radius: 0 0 8px 8px;
+    background-color: var(--bew-elevated-solid) !important;
+    box-shadow: var(--bew-shadow-2);
+  }
+}
+
+.homePage:not(.remove-top-bar) .bili-header.bewly-original-top-bar-scrolled.bewly-original-channel-open {
+  > .bewly-bili-channel-panel {
+    animation: bewly-bili-channel-panel-enter 0.3s;
+  }
+}
+
+.homePage:not(.remove-top-bar) .bili-header.bewly-original-top-bar-scrolled.bewly-original-channel-closing {
+  > .bewly-bili-channel-panel {
+    animation: bewly-bili-channel-panel-leave 0.3s forwards;
+    pointer-events: none;
+  }
+}
+
+@keyframes bewly-bili-channel-panel-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -5px, 0);
+  }
+}
+
+@keyframes bewly-bili-channel-panel-leave {
+  to {
+    opacity: 0;
+    transform: translate3d(0, -5px, 0);
+  }
+}
+
+.bewly-bili-channel-panel {
+  .channel-panel__column {
+    display: flex;
+    width: 152px;
+    flex: none;
+    flex-direction: column;
+    flex-wrap: wrap;
+    padding: 0 16px;
+    border-right: 1px solid var(--bew-fill-2);
+
+    &:last-child {
+      border-right: 0;
+    }
+  }
+
+  .channel-panel__item {
+    display: flex;
+    align-items: center;
+    box-sizing: border-box;
+    height: 32px;
+    margin: var(--bew-space-1) 0;
+    padding: var(--bew-space-1);
+    border-radius: var(--bew-interactive-radius);
+    color: var(--bew-text-1);
+    font-size: var(--bew-font-size-body);
+    font-weight: var(--bew-font-weight-regular);
+    line-height: var(--bew-line-height-body);
+    white-space: nowrap;
+
+    &:hover {
+      background-color: var(--bew-fill-2);
+    }
+  }
+
+  .channel-panel__icon,
+  .navigation-channel-icon {
+    width: 24px;
+    height: 24px;
+    flex: none;
+    margin-right: var(--bew-space-3);
+  }
+}
+
+.remove-top-bar {
+  // 隐藏原版第一行顶栏，并保留与 BewlyCat 顶栏一致的页面占位
+  .bili-header .bili-header__bar,
+  #internationalHeader,
+  .link-navbar,
+  #home_nav,
+  #biliMainHeader,
+  #bili-header-container {
+    visibility: hidden !important;
+    height: var(--bew-top-bar-height) !important;
+  }
+
+  // BewlyCat 顶栏下保留首屏频道行，仅隐藏滚动后出现的原版顶栏第二行。
+  .header-channel,
+  .bili-header-channel-panel,
+  .bewly-bili-fixed-channel,
+  .bewly-bili-channel-panel {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  // some pages have a white bar at the top; changing the top margin fixes this problem
+  .banner-wrapper,
+  .home-banner-wrapper {
+    margin-top: calc(-1 * var(--bew-top-bar-height)) !important;
+  }
+}
+
+// Bewly / 原版顶栏开启时隐藏第三方顶栏；两者都关时不套这个 class，留给 Evolved 等扩展。
+.remove-custom-navbar {
+  .custom-navbar {
+    display: none !important;
+  }
+}
+
+.remove-top-bar-without-placeholder {
+  // 隐藏所有可能的顶栏元素
+  #biliMainHeader,
+  .bili-header,
+  .bili-header__bar,
+  .header-channel,
+  .bili-header-channel-panel,
+  #internationalHeader,
+  .link-navbar,
+  #home_nav,
+  #bili-header-container,
+  .custom-navbar {
+    display: none !important;
+  }
+
+  // 移除可能的顶部间距
+  .banner-wrapper,
+  .home-banner-wrapper {
+    margin-top: 0 !important;
+  }
+
+  // 确保内容从顶部开始，移除为顶栏预留的空间
+  body {
+    padding-top: 0 !important;
+  }
+
+  // 主内容区域向上移动，填补顶栏空白
+  #app,
+  #mirror-vdcon,
+  .video-container-v1,
+  .left-container,
+  .international-home,
+  .bili-feed4,
+  .channel-layout {
+    margin-top: 0 !important;
+    padding-top: 0 !important;
+  }
+
+  // 对于有固定顶部偏移的页面，重置偏移
+  .bili-wrapper,
+  .bili-layout {
+    padding-top: 0 !important;
+  }
+}

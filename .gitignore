@@ -1,0 +1,28 @@
+.DS_Store
+.idea/
+.vite-ssg-dist
+.vite-ssg-temp
+.trae
+.kiro
+.claude
+.pnpm-store/
+*.backup
+*.crx
+*.local
+*.log
+*.pem
+*.xpi
+*.zip
+dist
+dist-ssr
+extension/
+extension-firefox/
+extension-safari/dist/
+node_modules
+release/
+*-web-ext-profile
+extension-safari-macos/
+# src/old-extension/
+.playwright-mcp/
+# 本地计划
+UI-FIX-PLAN.md

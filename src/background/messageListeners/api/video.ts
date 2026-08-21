@@ -1,0 +1,194 @@
+import type { APIMAP } from '../../utils'
+import { AHS } from '../../utils'
+
+const WEB_RECOMMEND_URL = 'https://api.bilibili.com/x/web-interface/wbi/index/top/feed/rcmd'
+
+const WEB_RECOMMEND_PARAMS = {
+  web_location: 1430650,
+  y_num: 4,
+  fresh_type: 3, // 原生首页「换一换」
+  feed_version: 'V8', // Feed版本
+  homepage_ver: 1, // 首页版本
+  ps: 10, // 原生首页「换一换」单页记录数（加载更多时覆盖为12）
+  fresh_idx: 1, // 翻页号，从1开始（调用时会动态传入）
+  fresh_idx_1h: 1, // 翻页号(一小时前?)，默认与 fresh_idx 相同
+  fetch_row: 1,
+  brush: 0,
+  device: 'unknown',
+  last_y_num: 4,
+  screen: '',
+  uniq_id: '',
+  last_showlist: '', // 上次抓取的视频av号列表（可选）
+  last_clicklist: '', // 当前推荐会话内点击过的卡片，最多50条（可选）
+}
+
+const API_VIDEO = {
+  // https://socialsisteryi.github.io/bilibili-API-collect/docs/video/recommend.html#%E8%8E%B7%E5%8F%96%E9%A6%96%E9%A1%B5%E8%A7%86%E9%A2%91%E6%8E%A8%E8%8D%90%E5%88%97%E8%A1%A8-web%E7%AB%AF
+  getRecommendVideos: {
+    url: WEB_RECOMMEND_URL,
+    _fetch: {
+      method: 'get',
+    },
+    params: WEB_RECOMMEND_PARAMS,
+    afterHandle: AHS.J_D,
+  },
+  getNoCookieRecommendVideos: {
+    url: WEB_RECOMMEND_URL,
+    _fetch: {
+      method: 'get',
+      credentials: 'omit',
+    },
+    params: WEB_RECOMMEND_PARAMS,
+    afterHandle: AHS.J_D,
+  },
+  getAppRecommendVideos: {
+    url: 'https://app.bilibili.com/x/v2/feed/index',
+    _fetch: {
+      method: 'get',
+    },
+    params: {
+      build: 74800100,
+      device: 'pad',
+      mobi_app: 'iphone',
+      c_locate: 'CN',
+      s_locale: 'zh-CN',
+      idx: 0,
+      appkey: '27eb53fc9058f8c3',
+      access_key: '',
+    },
+    afterHandle: AHS.J_D,
+  },
+  // https://github.com/indefined/UserScripts/blob/master/bilibiliHome/bilibiliHome.API.md#%E6%8F%90%E4%BA%A4%E4%B8%8D%E5%96%9C%E6%AC%A2
+  dislikeVideo: {
+    url: 'https://app.bilibili.com/x/feed/dislike',
+    _fetch: {
+      method: 'get',
+    },
+    params: {
+      access_key: '',
+      goto: '',
+      id: 0 as number | string,
+      reason_id: undefined as number | undefined,
+      feedback_id: undefined as number | undefined,
+      mobi_app: 'android',
+      build: 1,
+      appkey: '',
+      ts: '',
+      sign: '',
+    },
+    afterHandle: AHS.J_D,
+  },
+  webDislikeVideo: {
+    url: 'https://api.bilibili.com/x/web-interface/feedback/dislike',
+    _fetch: {
+      method: 'post',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+      },
+      body: {
+        app_id: 100,
+        platform: 5,
+        from_spmid: '',
+        spmid: '333.1007.0.0',
+        goto: 'av',
+        id: 0,
+        mid: 0,
+        track_id: '',
+        feedback_page: 1,
+        reason_id: 1,
+        csrf: '',
+      },
+    },
+    afterHandle: AHS.J_D,
+  },
+  // https://github.com/indefined/UserScripts/blob/master/bilibiliHome/bilibiliHome.API.md#%E6%92%A4%E9%94%80%E4%B8%8D%E5%96%9C%E6%AC%A2
+  undoDislikeVideo: {
+    url: 'https://app.bilibili.com/x/feed/dislike/cancel',
+    _fetch: {
+      method: 'get',
+    },
+    params: {
+      access_key: '',
+      goto: '',
+      id: 0 as number | string,
+      reason_id: undefined as number | undefined,
+      feedback_id: undefined as number | undefined,
+      mobi_app: 'android',
+      build: 1,
+      appkey: '',
+      ts: '',
+      sign: '',
+    },
+    afterHandle: AHS.J_D,
+  },
+  // https://socialsisteryi.github.io/bilibili-API-collect/docs/video/info.html#%E8%8E%B7%E5%8F%96%E8%A7%86%E9%A2%91%E8%AF%A6%E7%BB%86%E4%BF%A1%E6%81%AF-web%E7%AB%AF
+  getVideoInfo: {
+    url: 'https://api.bilibili.com/x/web-interface/view',
+    _fetch: {
+      method: 'get',
+    },
+    params: {
+      aid: '',
+      bvid: '',
+    },
+    afterHandle: AHS.J_D,
+  },
+  getVideoPageList: {
+    url: 'https://api.bilibili.com/x/player/pagelist',
+    _fetch: {
+      method: 'get',
+    },
+    params: {
+      aid: '',
+      bvid: '',
+    },
+    afterHandle: AHS.J_D,
+  },
+  // https://github.com/SocialSisterYi/bilibili-API-collect/blob/master/docs/comment/list.md#%E8%8E%B7%E5%8F%96%E8%AF%84%E8%AE%BA%E5%8C%BA%E6%98%8E%E7%BB%86_%E7%BF%BB%E9%A1%B5%E5%8A%A0%E8%BD%BD
+  getVideoComments: {
+    url: 'https://api.bilibili.com/x/v2/reply',
+    _fetch: {
+      method: 'get',
+    },
+    params: {
+      csrf: '',
+      type: 1,
+      oid: 0,
+      sort: 0,
+      nohot: 0,
+      pn: 1,
+      ps: 20,
+    },
+    afterHandle: AHS.J_D,
+  },
+  // https://github.com/SocialSisterYi/bilibili-API-collect/blob/def57d7a70ed1f39080069ba0f40648ce6ce2b90/docs/video_ranking/popular.md#%E8%8E%B7%E5%8F%96%E5%BD%93%E5%89%8D%E7%83%AD%E9%97%A8%E8%A7%86%E9%A2%91%E5%88%97%E8%A1%A8
+  getPopularVideos: {
+    url: 'https://api.bilibili.com/x/web-interface/popular',
+    _fetch: {
+      method: 'get',
+    },
+    params: {
+      pn: 1,
+      ps: 20,
+    },
+    afterHandle: AHS.J_D,
+  },
+  // https://socialsisteryi.github.io/bilibili-API-collect/docs/video/videostream_url.html#%E8%8E%B7%E5%8F%96%E8%A7%86%E9%A2%91%E6%B5%81%E5%9C%B0%E5%9D%80-web%E7%AB%AF
+  getVideoPreview: {
+    url: 'https://api.bilibili.com/x/player/wbi/playurl',
+    _fetch: {
+      method: 'get',
+    },
+    params: {
+      qn: 32,
+      fnver: 0,
+      fnval: 1,
+      bvid: '',
+      cid: 0,
+      web_location: '1550101',
+    },
+    afterHandle: AHS.J_D,
+  },
+} satisfies APIMAP
+
+export default API_VIDEO

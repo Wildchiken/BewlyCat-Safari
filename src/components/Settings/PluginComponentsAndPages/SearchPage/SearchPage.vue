@@ -1,0 +1,160 @@
+<script lang="ts" setup>
+import { useI18n } from 'vue-i18n'
+
+import { resolveSearchBarCharacterUrl, SEARCH_BAR_CHARACTERS } from '~/constants/imgs'
+import { settings } from '~/logic'
+
+import ChangeWallpaper from '../../components/ChangeWallpaper.vue'
+import SettingsItem from '../../components/SettingsItem.vue'
+import SettingsItemGroup from '../../components/SettingsItemGroup.vue'
+import SettingsSegmentedControl from '../../components/SettingsSegmentedControl.vue'
+
+const { t } = useI18n()
+
+const logoColorOptions = computed(() => [
+  { label: t('settings.logo_color_opt.theme_color'), value: 'themeColor' as const },
+  { label: t('settings.logo_color_opt.white'), value: 'white' as const },
+])
+
+const paginationModeOptions = computed(() => [
+  { label: t('settings.search_results_pagination_mode_opt.scroll'), value: 'scroll' as const },
+  { label: t('settings.search_results_pagination_mode_opt.pagination'), value: 'pagination' as const },
+])
+
+watch(() => settings.value.individuallySetSearchPageWallpaper, (newValue) => {
+  if (newValue)
+    document.documentElement.style.backgroundImage = `url(${settings.value.searchPageWallpaper})`
+  else
+    document.documentElement.style.backgroundImage = `url(${settings.value.wallpaper})`
+})
+
+function changeSearchBarFocusCharacter(url: string) {
+  settings.value.searchPageSearchBarFocusCharacter = url
+}
+</script>
+
+<template>
+  <div>
+    <SettingsItemGroup :title="$t('settings.group_logo')">
+      <SettingsItem :title="$t('settings.logo_color')" right-width="auto">
+        <SettingsSegmentedControl
+          v-model="settings.searchPageLogoColor"
+          :label="$t('settings.logo_color')"
+          :options="logoColorOptions"
+        />
+      </SettingsItem>
+
+      <SettingsItem :title="$t('settings.enable_logo_glowing_effect')" right-width="auto">
+        <Radio v-model="settings.searchPageLogoGlow" />
+      </SettingsItem>
+
+      <SettingsItem :title="$t('settings.logo_visibility')" right-width="auto">
+        <Radio v-model="settings.searchPageShowLogo" />
+      </SettingsItem>
+    </SettingsItemGroup>
+
+    <SettingsItemGroup :title="$t('settings.group_search_bar')">
+      <SettingsItem :title="$t('settings.show_search_recommendation')" :desc="$t('settings.show_search_recommendation_desc')" right-width="auto">
+        <Radio v-model="settings.showSearchRecommendation" />
+      </SettingsItem>
+
+      <SettingsItem :title="$t('settings.enable_search_history')" :desc="$t('settings.enable_search_history_desc')" right-width="auto">
+        <Radio v-model="settings.enableSearchHistory" />
+      </SettingsItem>
+
+      <SettingsItem :title="$t('settings.bg_darkens_when_the_search_bar_is_focused')" right-width="auto">
+        <Radio v-model="settings.searchPageDarkenOnSearchFocus" />
+      </SettingsItem>
+
+      <SettingsItem :title="$t('settings.bg_blurs_when_the_search_bar_is_focused')" right-width="auto">
+        <template #desc>
+          <span class="bew-warning-text">{{ $t('common.performance_impact_warn') }}</span>
+        </template>
+
+        <Radio v-model="settings.searchPageBlurredOnSearchFocus" />
+      </SettingsItem>
+
+      <SettingsItem :title="$t('settings.choose_search_bar_focused_character')">
+        <template #bottom>
+          <div grid="~ xl:cols-8 lg:cols-6 cols-5 gap-4">
+            <picture
+              class="bew-settings-option--lift"
+              aspect-square bg="$bew-fill-1" rounded="$bew-radius" overflow-hidden
+              un-border="4 transparent" cursor-pointer
+              grid place-items-center
+              :class="{ 'selected-wallpaper': settings.searchPageSearchBarFocusCharacter === '' }"
+              @click="changeSearchBarFocusCharacter('')"
+            >
+              <div i-tabler:photo-off text="size-$bew-icon-size-xl $bew-text-3" />
+            </picture>
+            <Tooltip v-for="item in SEARCH_BAR_CHARACTERS" :key="item.url" placement="top" :content="item.name" aspect-square>
+              <picture
+                class="bew-settings-option--lift"
+                aspect-square bg="$bew-fill-1" rounded="$bew-radius" overflow-hidden
+                un-border="4 transparent" w-full
+                :class="{ 'selected-wallpaper': resolveSearchBarCharacterUrl(settings.searchPageSearchBarFocusCharacter) === item.url }"
+                @click="changeSearchBarFocusCharacter(item.url)"
+              >
+                <img
+                  :src="item.url" alt="" loading="lazy"
+                  w-full h-full object-contain
+                >
+              </picture>
+            </Tooltip>
+          </div>
+        </template>
+      </SettingsItem>
+    </SettingsItemGroup>
+
+    <SettingsItemGroup :title="$t('settings.group_hot_search')">
+      <SettingsItem :title="$t('settings.show_hot_search_in_search_page')" right-width="auto">
+        <template #desc>
+          <span>{{ $t('settings.show_hot_search_in_search_page_desc') }}</span>
+        </template>
+        <Radio v-model="settings.showHotSearchInTopBar" />
+      </SettingsItem>
+    </SettingsItemGroup>
+
+    <SettingsItemGroup :title="$t('settings.group_search_results')">
+      <SettingsItem :title="$t('settings.use_plugin_search_results_page')" right-width="auto">
+        <template #desc>
+          <span>
+            {{ settings.useOriginalBilibiliHomepage
+              ? $t('settings.use_plugin_search_results_page_disabled_by_original_homepage')
+              : $t('settings.use_plugin_search_results_page_desc') }}
+          </span>
+        </template>
+        <Radio
+          v-model="settings.usePluginSearchResultsPage"
+          :disabled="settings.useOriginalBilibiliHomepage"
+        />
+      </SettingsItem>
+
+      <SettingsItem :title="$t('settings.depersonalize_search_results')" right-width="auto">
+        <template #desc>
+          <span>{{ $t('settings.depersonalize_search_results_desc') }}</span>
+        </template>
+        <Radio v-model="settings.depersonalizeSearchResults" />
+      </SettingsItem>
+
+      <SettingsItem :title="$t('settings.search_results_pagination_mode')" right-width="auto">
+        <template #desc>
+          <span>{{ $t('settings.search_results_pagination_mode_desc') }}</span>
+        </template>
+        <SettingsSegmentedControl
+          v-model="settings.searchResultsPaginationMode"
+          :label="$t('settings.search_results_pagination_mode')"
+          :options="paginationModeOptions"
+        />
+      </SettingsItem>
+    </SettingsItemGroup>
+
+    <ChangeWallpaper type="searchPage" />
+  </div>
+</template>
+
+<style scoped lang="scss">
+.selected-wallpaper {
+  --uno: "border-$bew-theme-color-60";
+}
+</style>

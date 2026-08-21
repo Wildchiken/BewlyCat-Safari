@@ -1,0 +1,332 @@
+* {
+  outline-color: var(--bew-theme-color-80);
+  font-feature-settings: "tnum";
+  // outline-width: 2px;
+  // outline-offset: 2px;
+}
+
+.dark {
+  input,
+  textarea {
+    color-scheme: dark;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+html.bewly-design > ::-webkit-scrollbar-track {
+  background: var(--bew-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgba(120, 120, 140, 0.44);
+  border-radius: var(--bew-radius-full);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+:host,
+:root {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(120, 120, 140, 0.44) transparent;
+}
+
+html.bewly-design,
+.bewly-design body {
+  min-width: unset !important;
+  filter: none !important;
+  color: var(--bew-text-1);
+  background-image: none;
+}
+
+.dark.bewly-design body,
+html.dark.bewly-design {
+  background-color: var(--bew-bg) !important;
+}
+
+.bewly-design *::selection,
+.bewly-wrapper *::selection {
+  background: color-mix(in oklab, var(--bew-theme-color-60), var(--bew-bg, white) 20%) !important;
+  color: revert !important;
+}
+
+.bewly-design {
+  input {
+    background-color: transparent;
+  }
+}
+
+// Adjust broken image icon
+img:not(.pswp__img) {
+  position: relative;
+
+  &::before {
+    content: "";
+    display: block;
+    width: 100%;
+    height: 100%;
+    // background-image: url("/assets/broken-image.png");
+    background-size: 25px;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+}
+
+.bewly-wrapper {
+  font-size: var(--bew-base-font-size);
+  line-height: 1.4;
+
+  * {
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  .bew-page-heading {
+    margin: 0;
+    font-size: var(--bew-font-size-heading);
+    font-weight: var(--bew-font-weight-bold);
+    line-height: var(--bew-line-height-heading);
+  }
+
+  // Baseline keyboard feedback for legacy/raw controls. Component-specific
+  // focus styles may refine this ring but must not remove it without replacement.
+  :where(
+    button,
+    a,
+    input,
+    select,
+    textarea,
+    [role="button"],
+    [role="tab"],
+    [tabindex]:not([tabindex="-1"])
+  ):focus-visible {
+    outline: 2px solid var(--bew-theme-color-40);
+    outline-offset: var(--bew-space-0-5);
+  }
+
+  .keep-one-line {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .keep-two-lines {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    line-break: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+
+  .bew-content-card {
+    border-radius: var(--bew-card-radius);
+
+    @supports (corner-shape: superellipse(1.5)) {
+      border-radius: var(--bew-card-continuous-radius);
+      corner-shape: var(--bew-card-corner-shape);
+    }
+  }
+
+  .bew-top-bar-media-column {
+    width: var(--bew-top-bar-media-width);
+    flex: 0 0 auto;
+    align-self: flex-start;
+    overflow: hidden;
+    border-radius: var(--bew-top-bar-media-radius);
+
+    @supports (corner-shape: superellipse(1.5)) {
+      border-radius: var(--bew-top-bar-media-continuous-radius);
+      corner-shape: var(--bew-media-corner-shape);
+    }
+  }
+
+  .bew-top-bar-media-frame {
+    position: relative;
+    width: 100%;
+    aspect-ratio: var(--bew-top-bar-media-aspect-ratio);
+    flex: 0 0 auto;
+    align-self: flex-start;
+    overflow: hidden;
+    border-radius: var(--bew-top-bar-media-radius);
+
+    @supports (corner-shape: superellipse(1.5)) {
+      border-radius: var(--bew-top-bar-media-continuous-radius);
+      corner-shape: var(--bew-media-corner-shape);
+    }
+
+    > img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+  }
+
+  .bew-top-bar-media-column--narrow,
+  .bew-top-bar-media-frame--narrow {
+    width: var(--bew-top-bar-media-width-narrow);
+  }
+
+  .bew-top-bar-media-frame--compact {
+    width: var(--bew-top-bar-media-width-compact);
+  }
+
+  .bew-top-bar-media-copy {
+    min-width: 0;
+    flex: 1 1 auto;
+    font-size: var(--bew-top-bar-media-title-size);
+    line-height: var(--bew-top-bar-media-title-line-height);
+  }
+
+  .bew-top-bar-media-title {
+    overflow: hidden;
+    display: -webkit-box;
+    line-break: anywhere;
+    font-weight: var(--bew-top-bar-media-title-weight);
+    text-overflow: ellipsis;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+
+  .bew-top-bar-media-title--emphasis {
+    font-size: var(--bew-top-bar-media-title-emphasis-size);
+    line-height: var(--bew-top-bar-media-title-emphasis-line-height);
+  }
+
+  .bew-top-bar-media-author {
+    font-weight: var(--bew-top-bar-media-author-weight);
+  }
+
+  .bew-top-bar-media-author--compact {
+    overflow: hidden;
+    display: -webkit-box;
+    line-break: anywhere;
+    font-size: var(--bew-top-bar-media-meta-size);
+    line-height: var(--bew-top-bar-media-meta-line-height);
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+  }
+
+  .bew-top-bar-media-meta {
+    font-size: var(--bew-top-bar-media-meta-size);
+    font-weight: var(--bew-font-weight-regular);
+    line-height: var(--bew-top-bar-media-meta-line-height);
+  }
+
+  .bew-popover-inset {
+    padding: var(--bew-popover-padding);
+  }
+
+  code {
+    display: inline-block;
+    background-color: var(--bew-fill-1);
+    padding: 0 0.5em;
+    margin: 0.14em 0.2em;
+    border-radius: var(--bew-radius-sm);
+    font-weight: var(--bew-font-weight-semibold);
+    line-height: 1.24;
+  }
+
+  kbd {
+    display: inline-block;
+    background-color: var(--bew-fill-1);
+    padding: 0 0.5em;
+    margin: 0.14em 0.2em;
+    border-radius: var(--bew-radius-sm);
+    box-shadow:
+      0 0 0 1px var(--bew-border-color),
+      0 1.4px 0 0 var(--bew-fill-2);
+    line-height: 1.24;
+    cursor: pointer;
+    transition:
+      background-color 0.2s ease,
+      box-shadow 0.2s ease,
+      translate 0.2s ease;
+
+    &:hover {
+      background-color: var(--bew-fill-2);
+    }
+
+    &:active {
+      background-color: var(--bew-fill-3);
+      translate: 0 1.4px;
+      box-shadow:
+        0 0 0 1px var(--bew-border-color),
+        0 -1.4px 0 0 var(--bew-fill-2);
+    }
+  }
+
+  a.link {
+    color: var(--bew-theme-color);
+
+    &:hover {
+      color: var(--bew-theme-color-80);
+    }
+  }
+}
+
+// Keep the settings modal above body-level Teleports (for example, the
+// top-bar switcher) even though the modal itself lives inside this Shadow DOM.
+:host(.settings-open) {
+  position: relative;
+  z-index: var(--bew-z-settings-host);
+}
+
+// Note: View Transition styles for theme toggle are injected dynamically via JS in useDark.ts
+// because this file is loaded in Shadow DOM and cannot affect document-level ::view-transition pseudo-elements
+
+.bew-warning-text {
+  color: var(--bew-warning-color);
+}
+
+// Warning badges share one visual language across settings headings and items.
+.bew-warning-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--bew-space-0-5) var(--bew-space-2);
+  color: var(--bew-warning-color);
+  background: color-mix(in oklab, var(--bew-warning-color), transparent 88%);
+  border-radius: var(--bew-badge-radius);
+  font-size: var(--bew-font-size-caption);
+  font-weight: var(--bew-font-weight-semibold);
+  line-height: var(--bew-line-height-caption);
+}
+
+// Shared surface for search suggestions, filters and other anchored Pop UI.
+.bew-popover-surface {
+  box-sizing: border-box;
+  color: var(--bew-text-1);
+  background: var(--bew-elevated);
+  border: 1px solid var(--bew-popover-border-color);
+  border-radius: var(--bew-popover-surface-radius);
+  box-shadow: var(--bew-shadow-2);
+  backdrop-filter: var(--bew-filter-glass-1);
+}
+
+.bew-settings-option--lift {
+  cursor: pointer;
+  transition:
+    transform var(--bew-duration-normal) var(--bew-ease-standard),
+    filter var(--bew-duration-normal) var(--bew-ease-standard),
+    box-shadow var(--bew-duration-normal) var(--bew-ease-standard);
+
+  &:hover {
+    filter: brightness(1.08);
+    box-shadow: var(--bew-shadow-2);
+    transform: translateY(-2px);
+  }
+}

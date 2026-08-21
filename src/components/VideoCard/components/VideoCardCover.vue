@@ -1,0 +1,1008 @@
+<script setup lang="ts">
+import type flvjs from 'flv.js'
+import type { ErrorData, Events } from 'hls.js'
+import Hls from 'hls.js'
+
+import Button from '~/components/Button.vue'
+import Icon from '~/components/Icon.vue'
+import LazyPicture from '~/components/LazyPicture.vue'
+import Tooltip from '~/components/Tooltip.vue'
+import { settings } from '~/logic'
+import { calcCurrentTime } from '~/utils/dataFormatter'
+
+import type { Video } from '../types'
+
+interface Props {
+  skeleton?: boolean
+  video?: Video
+  layout: 'modern' | 'old'
+  horizontal?: boolean
+  removed: boolean
+  isHover: boolean
+  shouldHideOverlayElements: boolean
+  previewVideoUrl: string
+  videoElement: HTMLVideoElement | null
+  isInWatchLater: boolean
+  showWatcherLater: boolean
+  coverTopLeftAlwaysVisible?: boolean
+  coverTopRightAlwaysVisible?: boolean
+  coverImageUrl: string
+  // Modern layout specific
+  coverStatValues?: {
+    view: string
+    danmaku: string
+    like: string
+    duration: string
+  }
+  coverStatsVisibility?: {
+    view: boolean
+    danmaku: boolean
+    like: boolean
+    duration: boolean
+  }
+  hasCoverStats?: boolean
+  shouldHideCoverStats?: boolean
+  coverStatsStyle?: Record<string, string>
+}
+
+const props = defineProps<Props>()
+const emit = defineEmits<{
+  toggleWatchLater: []
+  undo: []
+  imageLoaded: []
+  previewFullscreenChange: [isFullscreen: boolean]
+}>()
+
+const videoRef = ref<HTMLVideoElement | null>(null)
+const isCoverHovered = ref(false)
+const isLoadingStream = ref<boolean>(false)
+const isPreviewFullscreen = ref<boolean>(false)
+const showVideoControls = ref<boolean>(false)
+const isScrubbing = ref<boolean>(false)
+const scrubProgress = ref<number>(0)
+const shouldEnableVideoControls = computed(() => settings.value.enableVideoCtrlBarOnVideoCard && !props.video?.roomid)
+const shouldEnableSwipeSeek = computed(() => settings.value.enableVideoPreviewSwipeSeek && !props.video?.roomid)
+let hls: Hls | null = null
+let flvPlayer: flvjs.Player | null = null
+/** 仅记录 pointerdown 意图；真正 scrub 需横向拖过阈值后才激活 */
+let activeScrubPointerId: number | null = null
+let scrubStartX = 0
+let scrubStartY = 0
+let scrubStartTime = 0
+let scrubPreviewWidth = 0
+/** 是否已确认为横向拖动手势（越过阈值）。长按/微抖不会置 true */
+let hasDragGesture = false
+let suppressPreviewClick = false
+let suppressPreviewClickTimeout: number | null = null
+let pendingScrubTime: number | null = null
+let scrubAnimationFrame: number | null = null
+let scrubSeekTimeout: number | null = null
+let lastScrubSeekAt = 0
+
+/** 需要明显的左右拖动才接管，避免长按/点击抖动误触并频繁 seek */
+const SCRUB_START_THRESHOLD_PX = 18
+const NEARBY_SEEK_RANGE_SECONDS = 30
+/** 拖动中降低视频 seek 频率；进度条仍即时更新 */
+const SCRUB_SEEK_INTERVAL_MS = 120
+
+function showControls() {
+  if (!shouldEnableVideoControls.value)
+    return
+
+  showVideoControls.value = true
+}
+
+function handlePreviewMouseMove() {
+  if (!shouldEnableVideoControls.value || !props.previewVideoUrl)
+    return
+
+  if (!props.isHover && !isPreviewFullscreen.value)
+    return
+
+  showControls()
+}
+
+function updateScrubProgress(videoEl: HTMLVideoElement) {
+  scrubProgress.value = Number.isFinite(videoEl.duration) && videoEl.duration > 0
+    ? Math.min(100, Math.max(0, videoEl.currentTime / videoEl.duration * 100))
+    : 0
+}
+
+function clearScrubSeekSchedule() {
+  if (scrubAnimationFrame !== null) {
+    cancelAnimationFrame(scrubAnimationFrame)
+    scrubAnimationFrame = null
+  }
+  if (scrubSeekTimeout !== null) {
+    clearTimeout(scrubSeekTimeout)
+    scrubSeekTimeout = null
+  }
+}
+
+function resetPreviewScrub() {
+  clearScrubSeekSchedule()
+  activeScrubPointerId = null
+  hasDragGesture = false
+  isScrubbing.value = false
+  pendingScrubTime = null
+  scrubPreviewWidth = 0
+  lastScrubSeekAt = 0
+}
+
+function getVideoTimeFromPointer(videoEl: HTMLVideoElement, pointerX: number) {
+  if (scrubPreviewWidth <= 0)
+    return null
+
+  const duration = videoEl.duration
+  if (!Number.isFinite(duration) || duration <= 0)
+    return null
+
+  const seekRange = Math.min(duration, NEARBY_SEEK_RANGE_SECONDS)
+  const deltaX = pointerX - scrubStartX
+  return Math.min(duration, Math.max(0, scrubStartTime + deltaX / scrubPreviewWidth * seekRange))
+}
+
+function applyPendingScrubSeek(videoEl: HTMLVideoElement, timestamp = performance.now()) {
+  const nextTime = pendingScrubTime
+  if (nextTime === null)
+    return
+
+  lastScrubSeekAt = timestamp
+  videoEl.currentTime = nextTime
+}
+
+/**
+ * 进度条即时刷新；真正改 video.currentTime 做节流。
+ * 节流等待结束后会补一次最新位置，避免拖动时画面卡住。
+ */
+function scheduleVideoTimeUpdate(videoEl: HTMLVideoElement, targetTime: number) {
+  pendingScrubTime = targetTime
+  scrubProgress.value = Math.min(100, Math.max(0, targetTime / videoEl.duration * 100))
+
+  const now = performance.now()
+  const elapsed = now - lastScrubSeekAt
+  if (elapsed >= SCRUB_SEEK_INTERVAL_MS) {
+    clearScrubSeekSchedule()
+    applyPendingScrubSeek(videoEl, now)
+    return
+  }
+
+  if (scrubSeekTimeout !== null || scrubAnimationFrame !== null)
+    return
+
+  const waitMs = Math.max(0, SCRUB_SEEK_INTERVAL_MS - elapsed)
+  scrubSeekTimeout = window.setTimeout(() => {
+    scrubSeekTimeout = null
+    scrubAnimationFrame = requestAnimationFrame((timestamp) => {
+      scrubAnimationFrame = null
+      if (pendingScrubTime === null || !hasDragGesture)
+        return
+      applyPendingScrubSeek(videoEl, timestamp)
+    })
+  }, waitMs)
+}
+
+function handlePreviewPointerDown(event: PointerEvent) {
+  const videoEl = videoRef.value
+  const previewEl = event.currentTarget as HTMLElement
+
+  if (!shouldEnableSwipeSeek.value || !videoEl || event.button !== 0)
+    return
+  if (!Number.isFinite(videoEl.duration) || videoEl.duration <= 0)
+    return
+
+  // Keep the native control bar interactive when it is enabled.
+  const rect = previewEl.getBoundingClientRect()
+  if (shouldEnableVideoControls.value && event.clientY >= rect.bottom - 40)
+    return
+
+  // 只记录起点。长按/点击不 seek、不 capture；需左右拖过阈值才激活。
+  activeScrubPointerId = event.pointerId
+  scrubStartX = event.clientX
+  scrubStartY = event.clientY
+  scrubStartTime = videoEl.currentTime
+  scrubPreviewWidth = rect.width
+  hasDragGesture = false
+  pendingScrubTime = null
+  lastScrubSeekAt = 0
+}
+
+function handlePreviewPointerMove(event: PointerEvent) {
+  // 未进入横向 scrub 时才刷新控制条，避免拖动中额外响应式开销
+  if (!hasDragGesture)
+    handlePreviewMouseMove()
+
+  if (activeScrubPointerId !== event.pointerId)
+    return
+
+  const videoEl = videoRef.value
+  const previewEl = event.currentTarget as HTMLElement
+  if (!videoEl || !Number.isFinite(videoEl.duration) || videoEl.duration <= 0)
+    return
+
+  const deltaX = event.clientX - scrubStartX
+  const deltaY = event.clientY - scrubStartY
+
+  if (!hasDragGesture) {
+    const horizontalDistance = Math.abs(deltaX)
+    const verticalDistance = Math.abs(deltaY)
+
+    // 位移不足：当作长按/静止，不处理
+    if (horizontalDistance < SCRUB_START_THRESHOLD_PX)
+      return
+
+    // 纵向优先：交给页面滚动，放弃本次 scrub 意图
+    if (horizontalDistance <= verticalDistance) {
+      resetPreviewScrub()
+      return
+    }
+
+    // 明确横向拖动一段距离后才接管
+    hasDragGesture = true
+    isScrubbing.value = true
+    pendingScrubTime = scrubStartTime
+    updateScrubProgress(videoEl)
+    previewEl.setPointerCapture(event.pointerId)
+  }
+
+  const targetTime = getVideoTimeFromPointer(videoEl, event.clientX)
+  if (targetTime !== null)
+    scheduleVideoTimeUpdate(videoEl, targetTime)
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+function finishPreviewScrub(event: PointerEvent, cancelled = false) {
+  if (activeScrubPointerId !== event.pointerId)
+    return
+
+  const previewEl = event.currentTarget as HTMLElement
+  if (previewEl.hasPointerCapture(event.pointerId))
+    previewEl.releasePointerCapture(event.pointerId)
+
+  const didDrag = hasDragGesture
+  const finalScrubTime = pendingScrubTime
+  resetPreviewScrub()
+
+  // 未形成横向拖动（点击/长按）直接结束，不 seek、不拦截点击
+  if (!didDrag || cancelled)
+    return
+
+  const videoEl = videoRef.value
+  if (videoEl && finalScrubTime !== null)
+    videoEl.currentTime = finalScrubTime
+
+  suppressPreviewClick = true
+  if (suppressPreviewClickTimeout !== null)
+    clearTimeout(suppressPreviewClickTimeout)
+  suppressPreviewClickTimeout = window.setTimeout(() => {
+    suppressPreviewClick = false
+    suppressPreviewClickTimeout = null
+  }, 0)
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+function handlePreviewClick(event: MouseEvent) {
+  if (!suppressPreviewClick)
+    return
+
+  suppressPreviewClick = false
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+function handlePreviewDragStart(event: DragEvent) {
+  event.preventDefault()
+}
+
+const previewInteractionEvents = computed(() => ({
+  ...(shouldEnableVideoControls.value
+    ? { pointerenter: handlePreviewMouseMove }
+    : {}),
+  ...(shouldEnableVideoControls.value || shouldEnableSwipeSeek.value
+    ? { pointermove: handlePreviewPointerMove }
+    : {}),
+  ...(shouldEnableSwipeSeek.value
+    ? {
+        pointerdown: handlePreviewPointerDown,
+        pointerup: finishPreviewScrub,
+        pointercancel: (event: PointerEvent) => finishPreviewScrub(event, true),
+        click: handlePreviewClick,
+        dragstart: handlePreviewDragStart,
+      }
+    : {}),
+}))
+
+function resetVideoElement(videoEl: HTMLVideoElement) {
+  videoEl.pause()
+  videoEl.removeAttribute('src')
+  videoEl.load()
+}
+
+function stopPreview(videoEl: HTMLVideoElement) {
+  cleanupPlayers()
+  resetPreviewScrub()
+  showVideoControls.value = false
+  resetVideoElement(videoEl)
+}
+
+function getFullscreenElement() {
+  const doc = document as Document & {
+    webkitFullscreenElement?: Element | null
+  }
+
+  return doc.fullscreenElement ?? doc.webkitFullscreenElement ?? null
+}
+
+function syncPreviewFullscreenState() {
+  const isFullscreen = Boolean(videoRef.value && getFullscreenElement() === videoRef.value)
+
+  if (isPreviewFullscreen.value === isFullscreen)
+    return
+
+  isPreviewFullscreen.value = isFullscreen
+  emit('previewFullscreenChange', isFullscreen)
+
+  if (isFullscreen) {
+    showVideoControls.value = true
+    return
+  }
+
+  if (!videoRef.value)
+    return
+
+  if (!props.isHover || !props.previewVideoUrl) {
+    stopPreview(videoRef.value)
+    return
+  }
+
+  showControls()
+}
+
+function cleanupPlayers() {
+  if (hls) {
+    hls.destroy()
+    hls = null
+  }
+  if (flvPlayer) {
+    flvPlayer.pause()
+    flvPlayer.unload()
+    flvPlayer.detachMediaElement()
+    flvPlayer.destroy()
+    flvPlayer = null
+  }
+  isLoadingStream.value = false
+}
+
+async function setupPreviewVideo(url: string, videoEl: HTMLVideoElement) {
+  // Check if URL is FLV stream
+  if (url.includes('.flv')) {
+    try {
+      // 动态导入 flv.js 以避免构建时依赖问题
+      const flvjsModule = await import('flv.js')
+      const flvjs = flvjsModule.default
+
+      if (flvjs.isSupported()) {
+        // Cleanup previous players and clear video src
+        cleanupPlayers()
+        resetVideoElement(videoEl)
+
+        isLoadingStream.value = true
+
+        flvPlayer = flvjs.createPlayer({
+          type: 'flv',
+          url,
+          isLive: true,
+        }, {
+          enableWorker: false, // 在扩展环境中禁用 worker
+          enableStashBuffer: false, // 禁用存储缓冲，减少延迟
+          stashInitialSize: 128, // 初始缓冲大小
+          lazyLoad: false,
+          lazyLoadMaxDuration: 1,
+          seekType: 'range',
+        })
+
+        flvPlayer.attachMediaElement(videoEl)
+        flvPlayer.load()
+
+        flvPlayer.on(flvjs.Events.LOADING_COMPLETE, () => {
+          isLoadingStream.value = false
+        })
+
+        flvPlayer.on(flvjs.Events.ERROR, (errorType, errorDetail) => {
+          console.error('FLV Player error:', errorType, errorDetail)
+          isLoadingStream.value = false
+          cleanupPlayers()
+        })
+
+        // 当有数据可以播放时立即播放
+        videoEl.addEventListener('loadeddata', () => {
+          isLoadingStream.value = false
+          videoEl.play().catch(() => {
+            // Ignore autoplay errors
+          })
+        }, { once: true })
+
+        videoEl.addEventListener('canplay', () => {
+          if (isLoadingStream.value) {
+            isLoadingStream.value = false
+          }
+        }, { once: true })
+      }
+    }
+    catch (error) {
+      console.error('Failed to load flv.js:', error)
+      isLoadingStream.value = false
+    }
+  }
+  // Check if URL is HLS stream (.m3u8)
+  else if (url.includes('.m3u8') || url.includes('m3u8')) {
+    if (Hls.isSupported()) {
+      // Cleanup previous players and clear video src
+      cleanupPlayers()
+      resetVideoElement(videoEl)
+
+      isLoadingStream.value = true
+
+      hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        // 优化配置以更快开始播放
+        maxBufferLength: 10, // 减少缓冲长度
+        maxMaxBufferLength: 20,
+        liveSyncDurationCount: 2, // 减少直播同步计数
+        liveMaxLatencyDurationCount: 5,
+        maxBufferSize: 60 * 1000 * 1000, // 60MB
+      })
+
+      hls.loadSource(url)
+      hls.attachMedia(videoEl)
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        isLoadingStream.value = false
+        videoEl.play().catch(() => {
+          // Ignore autoplay errors
+        })
+      })
+
+      hls.on(Hls.Events.ERROR, (_event: Events.ERROR, data: ErrorData) => {
+        if (data.fatal) {
+          isLoadingStream.value = false
+          switch (data.type) {
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              // Try to recover from media errors
+              hls?.recoverMediaError()
+              break
+            default:
+              // For other fatal errors, cleanup
+              cleanupPlayers()
+              break
+          }
+        }
+      })
+
+      // 添加首帧加载事件
+      hls.on(Hls.Events.BUFFER_APPENDED, () => {
+        if (isLoadingStream.value) {
+          isLoadingStream.value = false
+        }
+      })
+    }
+    // cSpell:ignore mpegurl
+    else if (videoEl.canPlayType('application/vnd.apple.mpegurl')) {
+      cleanupPlayers()
+      resetVideoElement(videoEl)
+      // Native HLS support (Safari)
+      isLoadingStream.value = true
+      videoEl.src = url
+
+      const handleCanPlay = () => {
+        isLoadingStream.value = false
+        videoEl.removeEventListener('canplay', handleCanPlay)
+      }
+
+      videoEl.addEventListener('canplay', handleCanPlay)
+      videoEl.play().catch(() => {
+        isLoadingStream.value = false
+        // Ignore autoplay errors
+      })
+    }
+  }
+  else {
+    cleanupPlayers()
+    resetVideoElement(videoEl)
+    showControls()
+    videoEl.src = url
+    videoEl.load()
+    videoEl.play().catch(() => {
+      // Ignore autoplay errors
+    })
+  }
+}
+
+// Watch for preview URL and videoRef changes
+watch([() => props.previewVideoUrl, () => props.isHover, videoRef], ([url, isHover, videoEl]) => {
+  if (!videoEl)
+    return
+
+  if (!isHover || !url) {
+    if (isPreviewFullscreen.value)
+      return
+
+    stopPreview(videoEl)
+    return
+  }
+
+  setupPreviewVideo(url, videoEl)
+})
+
+watch([shouldEnableVideoControls, () => props.previewVideoUrl, () => props.isHover], ([controlsEnabled, url, isHover]) => {
+  if (isPreviewFullscreen.value) {
+    if (controlsEnabled && url)
+      showVideoControls.value = true
+    return
+  }
+
+  if (!controlsEnabled || !url || !isHover) {
+    showVideoControls.value = false
+    return
+  }
+
+  showControls()
+}, { immediate: true })
+
+// Cleanup on unmount
+onMounted(() => {
+  document.addEventListener('fullscreenchange', syncPreviewFullscreenState)
+  document.addEventListener('webkitfullscreenchange', syncPreviewFullscreenState as EventListener)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('fullscreenchange', syncPreviewFullscreenState)
+  document.removeEventListener('webkitfullscreenchange', syncPreviewFullscreenState as EventListener)
+  resetPreviewScrub()
+  if (suppressPreviewClickTimeout !== null)
+    clearTimeout(suppressPreviewClickTimeout)
+  cleanupPlayers()
+})
+
+// Shadow styles are now injected globally via CSS variables from App.vue
+// No per-card computation needed - significant performance improvement!
+</script>
+
+<template>
+  <div
+    class="group/cover"
+    :data-layout-edit-target="skeleton ? undefined : 'video-card-cover'"
+    :data-layout-settings-menu="skeleton ? undefined : 'BewlyComponents'"
+    :data-layout-settings-page="skeleton ? undefined : 'video-card'"
+    :data-layout-settings-title-key="skeleton ? undefined : 'settings.enable_video_preview'"
+    shrink-0
+    relative bg="$bew-skeleton" rounded="$bew-media-radius"
+    overflow-hidden
+    cursor-pointer
+    group-hover:z-2
+    style="aspect-ratio: 16 / 9; contain: layout style; will-change: auto;"
+    @mouseenter="isCoverHovered = true"
+    @mouseleave="isCoverHovered = false"
+  >
+    <!-- Skeleton mode -->
+    <div
+      v-if="skeleton"
+      w-full h-full bg="$bew-skeleton" rounded="$bew-media-radius"
+      style="aspect-ratio: 16 / 9;"
+    />
+
+    <!-- Normal mode -->
+    <template v-else>
+      <!-- Video cover -->
+      <LazyPicture
+        :src="coverImageUrl"
+        loading="lazy"
+        :release-offscreen="settings.releaseOffscreenVideoCardImages"
+        :retain-screens="3"
+        :show-skeleton="true"
+        @loaded="emit('imageLoaded')"
+      />
+
+      <div
+        v-if="removed"
+        pos="absolute top-0 left-0" w-full h-fit aspect-video flex="~ col gap-2 items-center justify-center"
+        bg="$bew-fill-4" backdrop-blur-20px mix-blend-luminosity rounded="$bew-media-radius" z-2
+      >
+        <p mb-2 color-white text-lg>
+          {{ $t('video_card.video_removed') }}
+        </p>
+        <Button
+          color="rgba(255,255,255,.35)" text-color="white" size="small"
+          @click.prevent.stop="emit('undo')"
+        >
+          <template #left>
+            <div i-mingcute-back-line text-lg />
+          </template>
+          {{ $t('common.undo') }}
+        </Button>
+      </div>
+
+      <!-- Video preview -->
+      <Transition v-if="!removed && settings.enableVideoPreview" name="fade">
+        <div
+          v-if="previewVideoUrl && (isHover || isPreviewFullscreen)"
+          class="video-card-preview"
+          :class="{ 'video-card-preview--scrubbable': shouldEnableSwipeSeek }"
+          pos="absolute top-0 left-0" w-full aspect-video rounded="$bew-media-radius" bg-black
+          v-on="previewInteractionEvents"
+        >
+          <video
+            ref="videoRef"
+            autoplay muted
+            :draggable="false"
+            :controls="showVideoControls"
+            w-full h-full
+          />
+
+          <div
+            v-if="isScrubbing && !shouldEnableVideoControls"
+            class="video-card-preview__scrub-progress"
+            aria-hidden="true"
+          >
+            <div
+              class="video-card-preview__scrub-progress-value"
+              :style="{ transform: `scaleX(${scrubProgress / 100})` }"
+            />
+          </div>
+
+          <!-- Loading indicator -->
+          <Transition name="fade">
+            <div
+              v-if="isLoadingStream"
+              pos="absolute top-0 left-0"
+              w-full h-full
+              flex="~ items-center justify-center"
+              bg="black/50"
+              pointer-events-none
+            >
+              <div class="loading-spinner" />
+            </div>
+          </Transition>
+        </div>
+      </Transition>
+
+      <!-- Ranking Number -->
+      <div
+        v-if="video?.rank"
+        class="video-card-overlay-transition"
+        pos="absolute top-0"
+        p-2
+        :class="layout !== 'old' ? 'group-hover:opacity-0' : { 'opacity-0': shouldHideOverlayElements }"
+      >
+        <div
+          v-if="Number(video?.rank) <= 3"
+          bg="$bew-theme-color" text-center lh-0 h-30px w-30px
+          text-white rounded="1/2" shadow="$bew-shadow-1"
+          border="1 $bew-theme-color"
+          grid="~ place-content-center"
+          text="xl" fw-bold
+        >
+          {{ video?.rank }}
+        </div>
+        <div
+          v-else
+          bg="$bew-elevated-solid" text-center lh-30px h-30px w-30px
+          rounded="1/2" shadow="$bew-shadow-1"
+          border="1 $bew-border-color"
+        >
+          {{ video?.rank }}
+        </div>
+      </div>
+
+      <template v-if="!removed && video">
+        <!-- Old layout: Video Duration (right bottom) -->
+        <div
+          v-if="layout === 'old' && settings.showVideoCardDuration && (video?.duration || video?.durationStr)"
+          class="video-card-overlay-transition"
+          pos="absolute bottom-0 right-0"
+          z="2"
+          p="x-2 y-1"
+          m="1"
+          rounded="$bew-radius"
+          text="!white xs"
+          bg="black opacity-60"
+          :class="{ 'opacity-0': shouldHideOverlayElements }"
+        >
+          {{ video?.duration ? calcCurrentTime(video?.duration ?? 0) : video?.durationStr }}
+        </div>
+
+        <div
+          class="video-card-overlay-transform-transition"
+          :class="coverTopLeftAlwaysVisible ? 'opacity-100' : 'opacity-0 group-hover/cover:opacity-100'"
+          :transform="coverTopLeftAlwaysVisible ? 'scale-100' : 'scale-70 group-hover/cover:scale-100'"
+          pos="absolute top-0 left-0" z-2
+          @click.stop=""
+        >
+          <slot name="coverTopLeft" />
+        </div>
+
+        <div
+          class="video-card-overlay-transform-transition"
+          :class="coverTopRightAlwaysVisible ? 'opacity-100' : 'opacity-0 group-hover/cover:opacity-100'"
+          :transform="coverTopRightAlwaysVisible ? 'scale-100' : 'scale-70 group-hover/cover:scale-100'"
+          pos="absolute top-0 right-0" z-2
+          @click.stop=""
+        >
+          <slot name="coverTopRight" />
+        </div>
+
+        <div
+          v-if="video?.liveStatus === 1"
+          class="video-card-overlay-transition"
+          :class="layout !== 'old' ? 'group-hover:opacity-0' : { 'opacity-0': shouldHideOverlayElements }"
+          pos="absolute left-0 top-0" bg="$bew-theme-color" text="xs white" fw-bold
+          p="x-2 y-1" m-1 inline-block rounded="$bew-radius"
+        >
+          LIVE
+          <i i-svg-spinners:pulse-3 align-middle mt--0.2em />
+        </div>
+
+        <div
+          v-if="Object.keys(video?.badge ?? {}).length > 0"
+          class="video-card-overlay-transition"
+          :class="layout !== 'old' ? 'group-hover:opacity-0' : { 'opacity-0': shouldHideOverlayElements }"
+          :style="{
+            backgroundColor: video?.badge?.bgColor,
+            color: video?.badge?.color,
+          }"
+          pos="absolute right-0 top-0" bg="$bew-theme-color" text="xs white"
+          p="x-2 y-1" m-1 inline-block rounded="$bew-radius"
+        >
+          {{ video?.badge?.text }}
+        </div>
+
+        <!-- Track cover hover separately so delayed preview playback does not delay this action. -->
+        <div
+          v-if="showWatcherLater && isCoverHovered"
+          role="button"
+          tabindex="0"
+          :aria-label="isInWatchLater ? $t('common.added') : $t('common.save_to_watch_later')"
+          pos="absolute top-0 right-0" z="2"
+          p="x-2 y-1" m="1"
+          rounded="$bew-radius"
+          text="!white xl"
+          bg="black opacity-60"
+          class="video-card-overlay-transform-transition opacity-0 group-hover/cover:opacity-100"
+          transform="scale-70 group-hover/cover:scale-100"
+          @click.prevent.stop="emit('toggleWatchLater')"
+          @keydown.enter.prevent.stop="emit('toggleWatchLater')"
+          @keydown.space.prevent.stop="emit('toggleWatchLater')"
+        >
+          <Tooltip v-if="!isInWatchLater" :content="$t('common.save_to_watch_later')" placement="bottom-right" type="dark">
+            <div i-mingcute:carplay-line />
+          </Tooltip>
+          <Tooltip v-else :content="$t('common.added')" placement="bottom-right" type="dark">
+            <Icon icon="line-md:confirm" />
+          </Tooltip>
+        </div>
+
+        <!-- Modern layout: Cover stats (bottom overlay) -->
+        <div
+          v-if="layout !== 'old' && hasCoverStats"
+          class="video-card-cover-stats video-card-stats"
+          :class="{
+            'video-card-cover-stats--hidden': shouldHideCoverStats,
+          }"
+          :style="coverStatsStyle"
+        >
+          <div class="video-card-cover-stats__items">
+            <span
+              v-if="coverStatsVisibility?.view"
+              class="video-card-cover-stats__item cover-stat-view"
+            >
+              <Icon icon="mingcute:play-circle-line" class="video-card-cover-stats__icon" aria-hidden="true" />
+              <span class="video-card-cover-stats__value">{{ coverStatValues?.view }}</span>
+            </span>
+
+            <span
+              v-if="coverStatsVisibility?.danmaku"
+              class="video-card-cover-stats__item cover-stat-danmaku"
+            >
+              <Icon icon="mingcute:danmaku-line" class="video-card-cover-stats__icon" aria-hidden="true" />
+              <span class="video-card-cover-stats__value">{{ coverStatValues?.danmaku }}</span>
+            </span>
+
+            <span
+              v-if="coverStatsVisibility?.like"
+              class="video-card-cover-stats__item cover-stat-like"
+            >
+              <Icon icon="mingcute:thumb-up-2-line" class="video-card-cover-stats__icon" aria-hidden="true" />
+              <span class="video-card-cover-stats__value">{{ coverStatValues?.like }}</span>
+            </span>
+          </div>
+
+          <span
+            v-if="coverStatsVisibility?.duration"
+            class="video-card-cover-stats__item video-card-cover-stats__item--duration"
+          >
+            <span class="video-card-cover-stats__value">{{ coverStatValues?.duration }}</span>
+          </span>
+        </div>
+      </template>
+    </template>
+  </div>
+</template>
+
+<style lang="scss" scoped>
+.video-card-overlay-transition {
+  transition: opacity var(--bew-duration-moderate, 300ms) var(--bew-ease-standard, ease);
+}
+
+.video-card-overlay-transform-transition {
+  transition:
+    opacity var(--bew-duration-moderate, 300ms) var(--bew-ease-standard, ease),
+    transform var(--bew-duration-moderate, 300ms) var(--bew-ease-standard, ease);
+}
+
+.video-card-preview--scrubbable {
+  cursor: ew-resize;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.video-card-preview--scrubbable video {
+  -webkit-user-drag: none;
+}
+
+.video-card-preview__scrub-progress {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  left: 0.5rem;
+  z-index: 3;
+  height: 0.25rem;
+  overflow: hidden;
+  border-radius: var(--bew-radius-full);
+  background: rgb(255 255 255 / 35%);
+  pointer-events: none;
+}
+
+.video-card-preview__scrub-progress-value {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--bew-theme-color);
+  transform-origin: left center;
+  will-change: transform;
+}
+
+.video-card-cover-stats {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding: calc(var(--video-card-stats-font-size, 0.75rem) * 0.55)
+    calc(var(--video-card-stats-font-size, 0.75rem) * 0.6) calc(var(--video-card-stats-font-size, 0.75rem) * 0.45);
+  color: #fff;
+  font-size: var(--video-card-stats-font-size, 0.75rem);
+  opacity: 1;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+  /* 只让下面两个角继承圆角，上面保持直线 */
+  border-bottom-left-radius: inherit;
+  border-bottom-right-radius: inherit;
+  /* 确保容器不会溢出 */
+  overflow: hidden;
+}
+
+.video-card-cover-stats::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  /* 简化渐变：从6层减少到3层，提升性能 */
+  background: var(
+    --bew-video-card-shadow-gradient,
+    linear-gradient(to top, rgba(0, 0, 0, 0.75) 0%, rgba(0, 0, 0, 0.35) 50%, transparent 100%)
+  );
+  height: var(--bew-video-card-shadow-height-multiplier, calc(var(--video-card-stats-overlay-scale, 1.4) * 100%));
+  border-bottom-left-radius: inherit;
+  border-bottom-right-radius: inherit;
+  pointer-events: none;
+}
+
+.video-card-cover-stats > * {
+  position: relative;
+  z-index: 1;
+}
+
+.video-card-cover-stats__items {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+  flex-wrap: nowrap;
+  /* 不允许收缩，避免数字被截断 */
+  flex-shrink: 0;
+  /* 允许内容溢出，由容器查询控制显示 */
+  min-width: 0;
+}
+
+.video-card-cover-stats__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.video-card-cover-stats__icon {
+  font-size: var(--video-card-stats-icon-size, calc(var(--video-card-stats-font-size, 0.75rem) * 1.1));
+  color: currentColor;
+}
+
+.video-card-cover-stats__value {
+  font-size: var(--video-card-stats-font-size, 0.75rem);
+  line-height: 1;
+}
+
+.video-card-cover-stats__item--duration {
+  margin-left: auto;
+  font-size: var(--video-card-stats-font-size, 0.75rem);
+  /* 时长固定在最右侧，不收缩 */
+  flex-shrink: 0;
+}
+
+/* 响应式显示控制已移至 VideoCard.vue 的 coverStatsVisibility 计算属性 */
+/* 避免 CSS Container Query 在特定系统缩放（如 Windows 125%）下的性能问题 */
+
+.video-card-cover-stats--hidden {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ✅ 性能优化：从父组件 :deep() 移至本地 scoped，减少跨组件选择器匹配 */
+/* 播放量和时长始终显示，弹幕和点赞在较宽屏幕显示 */
+.cover-stat-view {
+  display: inline-flex; /* 播放量始终显示 */
+}
+
+.cover-stat-danmaku,
+.cover-stat-like {
+  display: none; /* 默认隐藏弹幕和点赞 */
+}
+
+/* 使用媒体查询代替容器查询（性能更好） */
+/* 屏幕宽度 > 768px 时显示弹幕 */
+@media (min-width: 768px) {
+  .cover-stat-danmaku {
+    display: inline-flex;
+  }
+}
+
+/* 屏幕宽度 > 1024px 时显示点赞 */
+@media (min-width: 1024px) {
+  .cover-stat-like {
+    display: inline-flex;
+  }
+}
+</style>

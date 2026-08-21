@@ -1,0 +1,1074 @@
+<script setup lang="ts">
+import { useElementSize, useWindowSize } from '@vueuse/core'
+import type { CSSProperties } from 'vue'
+import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+import Icon from '~/components/Icon.vue'
+import { UndoForwardState, useBewlyApp } from '~/composables/useAppProvider'
+import { useDark } from '~/composables/useDark'
+import { useDelayedHover } from '~/composables/useDelayedHover'
+import { useLayoutEditMode } from '~/composables/useLayoutEditMode'
+import { HomeSubPage } from '~/contentScripts/views/Home/types'
+import { AppPage } from '~/enums/appEnums'
+import { settings } from '~/logic'
+import type { DockItem } from '~/stores/mainStore'
+import { useMainStore } from '~/stores/mainStore'
+import { isHomePage, openLinkToNewTab } from '~/utils/main'
+
+import Tooltip from '../Tooltip.vue'
+import type { HoveringDockItem } from './types'
+
+const props = defineProps<{
+  activatedPage: AppPage
+}>()
+
+const emit = defineEmits<{
+  (e: 'dockItemClick', dockItem: DockItem): void
+  (e: 'dockItemMiddleClick', dockItem: DockItem): void
+  (e: 'refresh'): void
+  (e: 'backToTop'): void
+  (e: 'undoRefresh'): void
+  (e: 'forwardRefresh'): void
+}>()
+
+const mainStore = useMainStore()
+const { t } = useI18n()
+const { isDark, toggleDark } = useDark()
+const { reachTop, homeActivatedPage, undoForwardState, canRefreshHomeSubPage, openSettings } = useBewlyApp()
+const { isLayoutEditing, toggleLayoutEditMode } = useLayoutEditMode()
+
+// 计算属性：是否显示撤销按钮
+const showUndo = computed(() => undoForwardState.value === UndoForwardState.ShowUndo)
+// 计算属性：是否显示前进按钮
+const showForward = computed(() => undoForwardState.value === UndoForwardState.ShowForward)
+
+const hideDock = ref<boolean>(false)
+const dockContentHover = ref<boolean>(false)
+const dockReady = ref(false)
+let dockReadyFrame: number | undefined
+const keepDockActionsVisible = computed((): boolean => {
+  return settings.value.autoHideDock && settings.value.alwaysShowDockActionsWhenAutoHide
+})
+const dockContentRef = useDelayedHover({
+  enterDelay: 100,
+  leaveDelay: 600,
+  enter: () => {
+    if (shouldIgnorePinnedActionHover())
+      return
+    dockContentHover.value = true
+    toggleHideDock(false)
+  },
+  leave: () => {
+    dockContentHover.value = false
+    toggleHideDock(true)
+  },
+})
+
+// Global mouse move detection for edge zones
+const edgeZoneSize = 20 // pixels from edge
+let mouseEnterTimer: any | undefined
+let mouseLeaveTimer: any | undefined
+
+function handleGlobalMouseMove(event: MouseEvent) {
+  if (!settings.value.autoHideDock) {
+    return
+  }
+
+  if (keepDockActionsVisible.value && isPinnedActionsTarget(event.target)) {
+    if (mouseEnterTimer) {
+      clearTimeout(mouseEnterTimer)
+      mouseEnterTimer = undefined
+    }
+    return
+  }
+
+  const { clientX, clientY } = event
+  const { innerWidth, innerHeight } = window
+
+  let isInEdgeZone = false
+
+  if (settings.value.dockPosition === 'left' && clientX <= edgeZoneSize) {
+    isInEdgeZone = true
+  }
+  else if (settings.value.dockPosition === 'right' && clientX >= innerWidth - edgeZoneSize) {
+    isInEdgeZone = true
+  }
+  else if (settings.value.dockPosition === 'bottom' && clientY >= innerHeight - edgeZoneSize) {
+    isInEdgeZone = true
+  }
+
+  if (isInEdgeZone) {
+    if (mouseLeaveTimer) {
+      clearTimeout(mouseLeaveTimer)
+      mouseLeaveTimer = undefined
+    }
+    if (!mouseEnterTimer) {
+      mouseEnterTimer = setTimeout(() => {
+        toggleHideDock(false)
+      }, 100)
+    }
+  }
+  else {
+    if (mouseEnterTimer) {
+      clearTimeout(mouseEnterTimer)
+      mouseEnterTimer = undefined
+    }
+    if (!mouseLeaveTimer && !dockContentHover.value) {
+      mouseLeaveTimer = setTimeout(() => {
+        toggleHideDock(true)
+      }, 600)
+    }
+  }
+}
+
+const hoveringDockItem = reactive<HoveringDockItem>({
+  themeMode: false,
+  settings: false,
+})
+const currentDockItems = ref<DockItem[]>([])
+const activatedDockItem = ref<DockItem>()
+
+const dockEditActions = computed(() => [
+  {
+    key: 'refresh' as const,
+    label: t('common.operation.refresh'),
+    icon: 'line-md:rotate-270',
+  },
+  {
+    key: 'backToTop' as const,
+    label: t('layout_editor.back_to_top'),
+    icon: 'line-md:arrow-small-up',
+  },
+])
+
+const tooltipPlacement = computed(() => {
+  if (settings.value.dockPosition === 'left')
+    return 'right'
+  else if (settings.value.dockPosition === 'right')
+    return 'left'
+  else if (settings.value.dockPosition === 'bottom')
+    return 'top'
+  return 'right'
+})
+
+/**
+ * Whether to show the back to top or refresh button
+ */
+const showBackToTopOrRefreshButton = computed((): boolean => {
+  const dockItemConfig = settings.value.dockItemsConfig.find(e => e.page === props.activatedPage)
+  if (dockItemConfig && dockItemConfig.useOriginalBiliPage) {
+    return false
+  }
+
+  // 在首页显示返回顶部/刷新按钮（包括搜索页）
+  return isHomePage()
+})
+
+const canRefreshCurrentPage = computed((): boolean => {
+  if (props.activatedPage === AppPage.Search || props.activatedPage === AppPage.SearchResults)
+    return false
+
+  return props.activatedPage !== AppPage.Home || homeActivatedPage.value === HomeSubPage.ForYou || canRefreshHomeSubPage.value
+})
+
+const showBackToTopOrRefreshActions = computed((): boolean => {
+  return showBackToTopOrRefreshButton.value && (canRefreshCurrentPage.value || !reachTop.value)
+})
+
+/**
+ * Whether to show the undo/forward buttons
+ * Only show on Home page when current sub-page is ForYou
+ */
+const shouldShowUndoForwardButtons = computed((): boolean => {
+  return props.activatedPage === AppPage.Home && homeActivatedPage.value === HomeSubPage.ForYou
+})
+
+const showUndoForwardActions = computed((): boolean => {
+  return shouldShowUndoForwardButtons.value && (showUndo.value || showForward.value) && settings.value.enableUndoRefreshButton
+})
+
+const showDockActionButtons = computed((): boolean => {
+  return showBackToTopOrRefreshActions.value || showUndoForwardActions.value
+})
+
+watch(() => settings.value.autoHideDock, (newValue) => {
+  hideDock.value = newValue
+}, { immediate: true })
+
+// use Json stringify to watch the changes of the array item properties
+watch(() => JSON.stringify(settings.value.dockItemsConfig), () => {
+  currentDockItems.value = computeDockItem()
+}, { immediate: true })
+
+function computeDockItem(): DockItem[] {
+  if (Array.isArray(settings.value.dockItemsConfig) && settings.value.dockItemsConfig.length < mainStore.dockItems.length) {
+    // Add missing items to dockItemsConfig
+    const missingItems = mainStore.dockItems.filter(dock => !settings.value.dockItemsConfig.some(item => item.page === dock.page))
+    settings.value.dockItemsConfig = [
+      ...settings.value.dockItemsConfig,
+      ...missingItems.map(dock => ({
+        page: dock.page,
+        visible: true,
+        openInNewTab: false,
+        useOriginalBiliPage: dock.useOriginalBiliPage,
+      })),
+    ]
+  }
+  // if dockItemsConfig not fresh, set it to default
+  else if (!Array.isArray(settings.value.dockItemsConfig) || settings.value.dockItemsConfig.length !== mainStore.dockItems.length) {
+    settings.value.dockItemsConfig = mainStore.dockItems.map(dock => ({
+      page: dock.page,
+      visible: true,
+      openInNewTab: false,
+      useOriginalBiliPage: dock.useOriginalBiliPage,
+    }))
+  }
+
+  const targetDockItems: DockItem[] = []
+
+  settings.value.dockItemsConfig.forEach((item) => {
+    const foundItem = mainStore.dockItems.find(defaultItem => defaultItem.page === item.page)
+    // If the dock item does not have Bewly page, then use the original BiliBili page
+    if (!foundItem?.hasBewlyPage)
+      item.useOriginalBiliPage = true
+
+    if (item.visible) {
+      targetDockItems.push({
+        i18nKey: foundItem?.i18nKey || '',
+        icon: foundItem?.icon || '',
+        iconActivated: foundItem?.iconActivated || '',
+        page: foundItem?.page || AppPage.Home,
+        openInNewTab: item.openInNewTab,
+        useOriginalBiliPage: item.useOriginalBiliPage || !foundItem?.hasBewlyPage,
+        url: foundItem?.url || '',
+        hasBewlyPage: foundItem?.hasBewlyPage || false,
+      })
+    }
+  })
+  return targetDockItems
+}
+
+function handleDockThemeClick(event: MouseEvent) {
+  if (!isLayoutEditing.value)
+    toggleDark(event)
+}
+
+function toggleHideDock(hide: boolean) {
+  if (isLayoutEditing.value) {
+    hideDock.value = false
+    return
+  }
+  if (settings.value.autoHideDock)
+    hideDock.value = hide
+  else
+    hideDock.value = false
+}
+
+function isPinnedActionsTarget(target: EventTarget | null): boolean {
+  return target instanceof Element && !!target.closest('.dock-action-buttons')
+}
+
+function shouldIgnorePinnedActionHover(event?: Event): boolean {
+  if (!keepDockActionsVisible.value || !hideDock.value)
+    return false
+  if (event)
+    return isPinnedActionsTarget(event.target)
+  return !!dockContentRef.value?.querySelector('.dock-action-buttons:hover')
+}
+
+function handleDockAreaEnter(event: MouseEvent) {
+  if (shouldIgnorePinnedActionHover(event))
+    return
+  toggleHideDock(false)
+}
+
+function handleDockItemClick($event: MouseEvent, dockItem: DockItem) {
+  if (isLayoutEditing.value)
+    return
+
+  if ($event.ctrlKey || $event.metaKey) {
+    openDockItemInNewTab(dockItem)
+    return
+  }
+
+  activatedDockItem.value = dockItem
+  emit('dockItemClick', dockItem)
+}
+
+function openDockItemInNewTab(dockItem: DockItem) {
+  if (isLayoutEditing.value)
+    return
+
+  activatedDockItem.value = dockItem
+  openLinkToNewTab(`https://www.bilibili.com/?page=${dockItem.page}`)
+}
+
+function handleBackToTopOrRefresh(action: 'backToTop' | 'refresh' | 'auto' = 'auto') {
+  if (action === 'backToTop') {
+    emit('backToTop')
+  }
+  else if (action === 'refresh') {
+    if (canRefreshCurrentPage.value)
+      emit('refresh')
+  }
+  else {
+    if (reachTop.value && canRefreshCurrentPage.value) {
+      emit('refresh')
+    }
+    else {
+      emit('backToTop')
+    }
+  }
+}
+
+// 处理撤销刷新
+function handleUndoRefresh() {
+  emit('undoRefresh')
+  undoForwardState.value = UndoForwardState.ShowForward
+}
+
+// 添加处理前进的方法
+function handleForwardRefresh() {
+  emit('forwardRefresh')
+  undoForwardState.value = UndoForwardState.ShowUndo
+}
+
+// 添加统一的前进后退处理方法
+function handleHistoryNavigation() {
+  if (showUndo.value) {
+    handleUndoRefresh()
+  }
+  else if (showForward.value) {
+    handleForwardRefresh()
+  }
+}
+
+function isDockItemActivated(dockItem: DockItem): boolean {
+  // SearchResults 页面时也激活 Search 按钮
+  if (props.activatedPage === AppPage.SearchResults && dockItem.page === AppPage.Search) {
+    return isHomePage()
+  }
+  return props.activatedPage === dockItem.page && isHomePage()
+}
+
+const { width: windowWidth, height: windowHeight } = useWindowSize()
+const { width: dockWidth, height: dockHeight } = useElementSize(dockContentRef)
+
+// The initial 0 -> measured scale must render without a transition; later
+// responsive scale changes can keep the existing smooth behavior.
+watch([dockWidth, dockHeight], ([width, height]) => {
+  if (dockReady.value || dockReadyFrame !== undefined || !width || !height)
+    return
+
+  dockReadyFrame = requestAnimationFrame(() => {
+    dockReady.value = true
+    dockReadyFrame = undefined
+  })
+}, { flush: 'post' })
+
+const dockScale = computed((): number => {
+  if (!dockHeight.value || !dockWidth.value)
+    return 1
+
+  // Get current top bar height from CSS variable
+  const getTopBarHeight = (): number => {
+    const topBarHeight = getComputedStyle(document.documentElement)
+      .getPropertyValue('--bew-top-bar-height')
+      .replace('px', '')
+    return Number.parseInt(topBarHeight) || 64 // fallback to 64px
+  }
+
+  const currentTopBarHeight = getTopBarHeight()
+
+  // Dynamic margins based on screen size and dock position
+  let heightMargin: number
+  let widthMargin: number
+
+  if (settings.value.dockPosition === 'bottom') {
+    // For bottom position, use original logic
+    heightMargin = Math.max(100, Math.min(150, windowHeight.value * 0.1))
+    widthMargin = Math.max(100, Math.min(150, windowWidth.value * 0.1))
+  }
+  else {
+    // For side positions, adjust margins considering responsive top bar height
+    heightMargin = Math.max(50, Math.min(100, windowHeight.value * 0.08)) + currentTopBarHeight
+    widthMargin = Math.max(50, Math.min(100, windowWidth.value * 0.08))
+  }
+
+  const maxAllowedHeight = windowHeight.value - heightMargin
+  const maxAllowedWidth = windowWidth.value - widthMargin
+
+  const buttonSize = 45 // lg:w-45px w-35px, use larger size for calculation
+  const buttonGap = 8 // gap-2 = 8px
+
+  let additionalHeight = 0
+  let additionalWidth = 0
+
+  if (settings.value.dockPosition === 'bottom') {
+    const maxButtonCount = isLayoutEditing.value
+      ? 2
+      : (settings.value.backToTopAndRefreshButtonsAreSeparated ? 2 : 1)
+    const maxUndoForwardButtonCount = settings.value.enableUndoRefreshButton ? 1 : 0
+    additionalWidth = (maxButtonCount + maxUndoForwardButtonCount) * buttonSize + maxButtonCount * buttonGap
+  }
+  else {
+    const maxButtonCount = isLayoutEditing.value
+      ? 2
+      : (settings.value.backToTopAndRefreshButtonsAreSeparated ? 2 : 1)
+    const maxUndoForwardButtonCount = settings.value.enableUndoRefreshButton ? 1 : 0
+    additionalHeight = (maxButtonCount + maxUndoForwardButtonCount) * buttonSize + maxButtonCount * buttonGap
+  }
+
+  const effectiveDockHeight = dockHeight.value + additionalHeight
+  const effectiveDockWidth = dockWidth.value + additionalWidth
+
+  // Calculate scale factors for both dimensions
+  const heightScale = effectiveDockHeight > maxAllowedHeight
+    ? maxAllowedHeight / effectiveDockHeight
+    : 1
+
+  const widthScale = effectiveDockWidth > maxAllowedWidth
+    ? maxAllowedWidth / effectiveDockWidth
+    : 1
+
+  // Use the smaller scale to ensure dock fits in both dimensions
+  return Math.min(heightScale, widthScale)
+})
+
+const dockActionButtonsStyle = computed<CSSProperties>(() => {
+  return {
+    bottom: settings.value.dockPosition === 'bottom' ? 'unset' : 0,
+    right: settings.value.dockPosition === 'bottom' ? 0 : 'unset',
+    transform: settings.value.dockPosition === 'bottom' ? 'translate(100%, 0)' : 'translateY(100%)',
+    flexDirection: settings.value.dockPosition === 'bottom' ? 'row' : 'column',
+  }
+})
+
+const dockTransformStyle = computed((): { transform: string, transformOrigin: string } => {
+  const position = settings.value.dockPosition
+  const scale = dockScale.value
+  dockContentRef.value?.style.setProperty('--scale', `${scale}`)
+
+  // Adjust origin based on dock position
+  const origin = {
+    left: 'left center',
+    right: 'right center',
+    bottom: 'center bottom',
+  }[position] || 'center center'
+
+  return {
+    transform: `scale(${scale})`,
+    transformOrigin: origin,
+  }
+})
+
+// 处理首页刷新快捷键
+function handleHomeRefreshKeydown(event: KeyboardEvent) {
+  // 检查快捷键设置是否启用
+  const shortcutConfig = settings.value.shortcuts?.homeRefresh
+  if (!shortcutConfig?.enabled) {
+    return
+  }
+
+  // 获取配置的快捷键
+  const configuredKey = shortcutConfig.key || 'R'
+
+  // 检查是否按下了配置的快捷键
+  if (event.key && event.key.toUpperCase() === configuredKey.toUpperCase() && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    // 检查页面中是否有任何输入框处于焦点状态
+    const activeElement = document.activeElement
+
+    // 使用事件路径检查是否点击了输入框
+    const eventPath = event.composedPath ? event.composedPath() : (event as any).path || []
+    let hasInputFocus = false
+
+    // 检查事件路径中是否包含输入元素
+    for (const element of eventPath) {
+      if (element instanceof HTMLInputElement
+        || element instanceof HTMLTextAreaElement
+        || (element instanceof HTMLElement && element.contentEditable === 'true')) {
+        hasInputFocus = true
+        break
+      }
+    }
+
+    // 备用检查：查找页面中所有输入元素并检查焦点
+    if (!hasInputFocus) {
+      const allInputs = document.querySelectorAll('input, textarea, [contenteditable="true"]')
+
+      allInputs.forEach((input) => {
+        const inputElement = input as HTMLElement
+        if (inputElement === activeElement
+          || inputElement === document.activeElement
+          || inputElement.matches(':focus')) {
+          hasInputFocus = true
+        }
+      })
+    }
+
+    // 最后检查：直接检查activeElement
+    if (!hasInputFocus && activeElement) {
+      if (activeElement.tagName === 'INPUT'
+        || activeElement.tagName === 'TEXTAREA'
+        || (activeElement instanceof HTMLElement && activeElement.contentEditable === 'true')) {
+        hasInputFocus = true
+      }
+    }
+
+    if (hasInputFocus)
+      return
+
+    // 如果没有输入框获得焦点且显示刷新按钮，则触发刷新
+    if (showBackToTopOrRefreshButton.value && canRefreshCurrentPage.value) {
+      event.preventDefault()
+      handleBackToTopOrRefresh('refresh')
+    }
+  }
+}
+
+// 在组件挂载时添加键盘事件监听
+onMounted(() => {
+  document.addEventListener('keydown', handleHomeRefreshKeydown)
+  // Add global mouse move listener for edge zone detection
+  window.addEventListener('mousemove', handleGlobalMouseMove)
+})
+
+// 在组件卸载时移除键盘事件监听
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleHomeRefreshKeydown)
+  // Remove global mouse move listener
+  window.removeEventListener('mousemove', handleGlobalMouseMove)
+  // Clear any pending timers
+  if (mouseEnterTimer) {
+    clearTimeout(mouseEnterTimer)
+  }
+  if (mouseLeaveTimer) {
+    clearTimeout(mouseLeaveTimer)
+  }
+  if (dockReadyFrame !== undefined)
+    cancelAnimationFrame(dockReadyFrame)
+})
+</script>
+
+<template>
+  <aside
+    class="dock-wrap"
+    pos="fixed top-0" z-100 flex="~ col justify-center items-center" w-full h-full
+    z-10 pointer-events-none
+  >
+    <!-- Edge Div -->
+    <div
+      v-if="settings.autoHideDock && hideDock && !isLayoutEditing"
+      class="dock-edge"
+      :class="`dock-edge-${settings.dockPosition}`"
+      @mouseenter="toggleHideDock(false)"
+      @mouseleave="toggleHideDock(true)"
+    />
+
+    <!-- Dock Content -->
+    <div
+      ref="dockContentRef"
+      class="dock-content"
+      data-layout-edit-target="dock-component"
+      data-layout-edit-direct
+      data-layout-settings-menu="BewlyComponents"
+      data-layout-settings-page="dock"
+      data-layout-settings-title-key="settings.group_dock"
+      :class="{
+        'left': settings.dockPosition === 'left',
+        'right': settings.dockPosition === 'right',
+        'bottom': settings.dockPosition === 'bottom',
+        'hide': hideDock && !isLayoutEditing && !keepDockActionsVisible,
+        'hide-inner': hideDock && !isLayoutEditing && keepDockActionsVisible,
+        'half-hide': settings.halfHideDock && !isLayoutEditing,
+        'hover': dockContentHover,
+        'ready': dockReady,
+      }"
+      :style="dockTransformStyle"
+      @mouseenter="handleDockAreaEnter"
+      @mouseleave="toggleHideDock(true)"
+    >
+      <div
+        class="dock-content-inner"
+      >
+        <template v-for="dockItem in currentDockItems" :key="dockItem.page">
+          <Tooltip :content="$t(dockItem.i18nKey)" :placement="tooltipPlacement">
+            <button
+              class="dock-item group"
+              :data-layout-edit-target="`dock-navigation-${dockItem.page}`"
+              data-layout-settings-menu="BewlyComponents"
+              data-layout-settings-page="dock"
+              data-layout-settings-title-key="settings.dock_content_adjustment"
+              :class="{
+                'active': isDockItemActivated(dockItem),
+                'inactive': hoveringDockItem.themeMode && isDark,
+                'disable-glowing-effect': settings.disableDockGlowingEffect,
+              }"
+              @click="handleDockItemClick($event, dockItem)"
+              @click.middle="openDockItemInNewTab(dockItem)"
+            >
+              <div
+                v-show="!isDockItemActivated(dockItem)"
+                :class="dockItem.icon"
+                text-xl
+              />
+              <div
+                v-show="isDockItemActivated(dockItem)"
+                :class="dockItem.iconActivated"
+                text-xl
+              />
+            </button>
+          </Tooltip>
+        </template>
+
+        <!-- dividing line -->
+        <div class="divider" />
+
+        <div
+          v-if="isLayoutEditing || !settings.disableLightDarkModeSwitcherOnDock"
+          class="dock-edit-utility-item"
+          data-layout-edit-target="dock-theme"
+          data-layout-settings-menu="BewlyComponents"
+          data-layout-settings-page="dock"
+          data-layout-settings-title-key="settings.disable_light_dark_mode_switcher"
+          :class="{ 'dock-edit-utility-item--hidden': settings.disableLightDarkModeSwitcherOnDock }"
+        >
+          <Tooltip
+            :content="isDark ? $t('dock.dark_mode') : $t('dock.light_mode')" :placement="tooltipPlacement"
+            class="group"
+            pointer-events-none
+          >
+            <!-- moon -->
+            <div
+              v-if="isDark"
+              pos="absolute top-0 left-0 group-hover:top-2px group-hover:left--4px"
+              w-full h-full bg-white rounded="1/2"
+              z--2 pointer-events-none
+              :shadow="
+                settings.disableDockGlowingEffect
+                  ? 'none'
+                  : 'group-hover:[-8px_4px_160px_20px_hsla(226deg,85%,77%,1),-8px_4px_100px_12px_hsla(226deg,85%,77%,0.8),-8px_4px_60px_10px_hsla(226deg,85%,77%,0.6),-8px_4px_20px_4px_hsla(226deg,85%,77%,0.4),-4px_2px_8px_0_hsla(226deg,85%,77%,0.8)]'"
+              opacity-0 group-hover:opacity-100
+              duration-300
+            />
+
+            <button
+              class="dock-item"
+              bg="!dark-hover:$bew-bg" transform="!dark-hover:scale-100"
+              :shadow="settings.disableDockGlowingEffect ? 'none' : '!dark-hover:[inset_4px_-2px_8px_hsla(226deg,85%,77%,1)]'"
+              pointer-events-auto
+              @click="handleDockThemeClick"
+              @mouseenter="hoveringDockItem.themeMode = true"
+              @mouseleave="hoveringDockItem.themeMode = false"
+            >
+              <Transition name="fade">
+                <div v-show="hoveringDockItem.themeMode" absolute>
+                  <Icon v-if="isDark" icon="line-md:sunny-outline-to-moon-loop-transition" />
+                  <Icon v-else icon="line-md:moon-alt-to-sunny-outline-loop-transition" />
+                </div>
+              </Transition>
+              <Transition name="fade">
+                <div v-show="!hoveringDockItem.themeMode" absolute>
+                  <Icon v-if="isDark" icon="line-md:sunny-outline-to-moon-transition" />
+                  <Icon v-else icon="line-md:moon-to-sunny-outline-transition" />
+                </div>
+              </Transition>
+            </button>
+          </Tooltip>
+        </div>
+
+        <Tooltip :content="$t('dock.settings')" :placement="tooltipPlacement">
+          <button
+            class="dock-item group"
+            data-layout-edit-target="dock-settings"
+            data-layout-settings-menu="BewlyComponents"
+            data-layout-settings-page="dock"
+            data-layout-settings-title-key="settings.group_dock"
+            :class="{
+              inactive: hoveringDockItem.themeMode && isDark,
+            }"
+            @click="openSettings()"
+          >
+            <div i-mingcute:settings-3-line text-xl group-hover:rotate-180 transition="transform duration-400 ease-out" />
+          </button>
+        </Tooltip>
+
+        <Tooltip
+          v-if="settings.showLayoutEditButton || isLayoutEditing"
+          :content="$t(isLayoutEditing ? 'layout_editor.finish' : 'layout_editor.edit_dock')"
+          :placement="tooltipPlacement"
+        >
+          <button
+            class="dock-item dock-edit-button"
+            data-layout-edit-control
+            :class="{ active: isLayoutEditing }"
+            :aria-pressed="isLayoutEditing"
+            @click="toggleLayoutEditMode('dock')"
+          >
+            <Icon :icon="isLayoutEditing ? 'mingcute:check-line' : 'mingcute:edit-3-line'" />
+          </button>
+        </Tooltip>
+      </div>
+
+      <div
+        v-if="isLayoutEditing"
+        class="dock-edit-action-items"
+        :style="dockActionButtonsStyle"
+      >
+        <div
+          v-for="action in dockEditActions"
+          :key="action.key"
+          class="dock-edit-action-item"
+        >
+          <button
+            type="button"
+            class="back-to-top-or-refresh-btn"
+            :data-layout-edit-target="`dock-action-${action.key}`"
+            data-layout-settings-menu="BewlyComponents"
+            data-layout-settings-page="dock"
+            data-layout-settings-title-key="settings.back_to_top_and_refresh_buttons_are_separated"
+            :aria-label="action.label"
+            :title="action.label"
+          >
+            <Icon
+              :icon="action.icon"
+              class="dock-edit-action-item__icon"
+              :class="{ 'dock-edit-action-item__icon--refresh': action.key === 'refresh' }"
+              aria-hidden="true"
+            />
+          </button>
+        </div>
+      </div>
+
+      <!-- Back to top & refresh buttons -->
+      <div
+        v-if="!isLayoutEditing && showDockActionButtons"
+        class="dock-action-buttons"
+        :style="dockActionButtonsStyle"
+        pos="absolute"
+        flex="~ gap-2"
+      >
+        <template
+          v-if="settings.backToTopAndRefreshButtonsAreSeparated"
+        >
+          <template v-for="key in 2" :key="key">
+            <Transition name="fade">
+              <button
+                v-if="(key === 1 && canRefreshCurrentPage) || (key === 2 && !reachTop)"
+                class="back-to-top-or-refresh-btn"
+                :class="{
+                  inactive: hoveringDockItem.themeMode && isDark,
+                }"
+                @click="handleBackToTopOrRefresh(key === 1 ? 'refresh' : 'backToTop')"
+              >
+                <Icon
+                  v-if="key === 1"
+                  icon="line-md:rotate-270"
+                  class="dock-action-icon"
+                  shrink-0 rotate-90 absolute text="size-$bew-icon-size-lg"
+                />
+                <Icon
+                  v-else
+                  icon="line-md:arrow-small-up"
+                  class="dock-action-icon"
+                  shrink-0 absolute text="size-$bew-icon-size-lg"
+                />
+              </button>
+            </Transition>
+          </template>
+        </template>
+        <template v-else>
+          <button
+            class="back-to-top-or-refresh-btn"
+            :class="{
+              inactive: hoveringDockItem.themeMode && isDark,
+            }"
+            @click="handleBackToTopOrRefresh('auto')"
+          >
+            <Transition name="fade">
+              <Icon
+                v-if="reachTop && canRefreshCurrentPage"
+                icon="line-md:rotate-270"
+                class="dock-action-icon"
+                shrink-0 rotate-90 absolute text="size-$bew-icon-size-lg"
+              />
+              <Icon
+                v-else
+                icon="line-md:arrow-small-up"
+                class="dock-action-icon"
+                shrink-0 absolute text="size-$bew-icon-size-lg"
+              />
+            </Transition>
+          </button>
+        </template>
+        <!-- 将原来的两个按钮替换为一个 -->
+        <Transition name="fade">
+          <button
+            v-if="showUndoForwardActions"
+            class="back-to-top-or-refresh-btn"
+            :class="{
+              inactive: hoveringDockItem.themeMode && isDark,
+            }"
+            @click="handleHistoryNavigation"
+          >
+            <Icon
+              v-if="showUndo"
+              icon="mdi:undo-variant"
+              class="dock-action-icon"
+              shrink-0 absolute text="size-$bew-icon-size-lg"
+            />
+            <Icon
+              v-else-if="showForward"
+              icon="mdi:redo-variant"
+              class="dock-action-icon"
+              shrink-0 absolute text="size-$bew-icon-size-lg"
+            />
+          </button>
+        </Transition>
+      </div>
+    </div>
+  </aside>
+</template>
+
+<style lang="scss" scoped>
+.dock-wrap {
+  > * {
+    --uno: "pointer-events-auto";
+  }
+}
+
+.dock-edge {
+  &-left,
+  &-right,
+  &-bottom {
+    --uno: "absolute z--1";
+  }
+
+  &-left {
+    --uno: "left-0 top-0 w-14px h-full hover:w-60px";
+  }
+
+  &-right {
+    --uno: "right-0 top-0 w-14px h-full hover:w-60px";
+  }
+
+  &-bottom {
+    --uno: "left-0 bottom-0 w-full h-14px hover-h-60px";
+  }
+}
+
+.back-to-top-or-refresh-btn :deep(.dock-action-icon) {
+  width: var(--bew-icon-size-lg);
+  height: var(--bew-icon-size-lg);
+}
+
+.dock-content {
+  --uno: "absolute flex justify-center items-center scale-$scale";
+
+  transition-duration: 0ms;
+
+  &.ready {
+    transition-duration: var(--bew-duration-moderate, 300ms);
+  }
+
+  // Dock reveal can move an item underneath a stationary pointer. Delay only
+  // Dock tooltips so that movement does not cause a tooltip to flash immediately.
+  :deep(.b-tooltip) {
+    transition-delay: 0ms;
+  }
+
+  :deep(.b-tooltip-wrapper:hover .b-tooltip) {
+    transition-delay: var(--bew-duration-moderate, 300ms);
+  }
+
+  &.left {
+    --uno: "left-2 after:right--4px";
+  }
+  &.left.hide:not(.hover) {
+    --uno: "opacity-0 !translate-x--100%";
+  }
+  &.left.hide-inner:not(.hover) .dock-content-inner {
+    --uno: "opacity-0 !translate-x--100%";
+  }
+  &.left.half-hide:not(.hover) {
+    --uno: "!opacity-60 !translate-x--50%";
+  }
+
+  &.right {
+    --uno: "right-2 after:left--4px";
+  }
+  &.right.hide:not(.hover) {
+    --uno: "opacity-0 !translate-x-100%";
+  }
+  &.right.hide-inner:not(.hover) .dock-content-inner {
+    --uno: "opacity-0 !translate-x-100%";
+  }
+  &.right.half-hide:not(.hover) {
+    --uno: "!opacity-60 !translate-x-50%";
+  }
+
+  &.bottom {
+    --uno: "top-unset bottom-0";
+  }
+  &.bottom.hide:not(.hover) {
+    --uno: "opacity-0 !translate-y-100%";
+  }
+  &.bottom.hide-inner:not(.hover) .dock-content-inner {
+    --uno: "opacity-0 !translate-y-100%";
+  }
+  &.bottom.half-hide:not(.hover) {
+    --uno: "!opacity-60 !translate-y-50%";
+  }
+
+  &.hide-inner:not(.hover) {
+    pointer-events: none;
+  }
+
+  &.hide-inner:not(.hover) .dock-action-buttons {
+    pointer-events: auto;
+  }
+
+  .divider {
+    --uno: "my-1 mx-3 h-3px bg-$bew-border-color rounded-full";
+  }
+
+  &.bottom .divider {
+    --uno: "w-3px h-auto my-3 mx-1";
+  }
+
+  .dock-content-inner {
+    --uno: "duration-300 ease-in-out";
+    --uno: "p-2 m-2 bg-$bew-content-alt dark:bg-$bew-elevated";
+    --uno: "flex flex-col gap-2 shrink-0";
+    --uno: "rounded-full border-1 border-$bew-border-color";
+    box-shadow: var(--bew-shadow-edge-glow-1), var(--bew-shadow-2);
+    backdrop-filter: var(--bew-filter-glass-1);
+    transition:
+      transform var(--bew-duration-moderate, 300ms) ease-in-out,
+      opacity var(--bew-duration-moderate, 300ms) ease-in-out;
+  }
+
+  .dock-action-buttons {
+    z-index: 1;
+  }
+
+  &.bottom .dock-content-inner {
+    --uno: "flex-row";
+  }
+
+  .back-to-top-or-refresh-btn {
+    --uno: "transform active:important-scale-90 hover:scale-110";
+    --uno: "lg:w-45px w-35px lg:h-45px h-35px";
+    --uno: "grid place-items-center";
+    --uno: "filter-$bew-filter-glass-1";
+    --uno: "bg-$bew-elevated hover:bg-$bew-content-hover";
+    --uno: "rounded-full shadow-$bew-shadow-2 border-1 border-$bew-border-color";
+
+    backdrop-filter: var(--bew-filter-glass-1);
+    transition:
+      transform 300ms var(--bew-ease-emphasized, cubic-bezier(0.34, 1.3, 0.64, 1)),
+      background 300ms ease,
+      color 300ms ease,
+      box-shadow 300ms ease,
+      opacity 300ms ease;
+    box-shadow: var(--bew-shadow-edge-glow-1), var(--bew-shadow-2);
+
+    &.active {
+      --uno: "important-bg-$bew-theme-color-auto text-$bew-text-auto";
+      --uno: "shadow-$shadow-active dark:shadow-$shadow-dark";
+      --uno: "active:shadow-$shadow-active-active dark-active:shadow-$shadow-dark-active";
+    }
+
+    &.inactive {
+      --uno: "opacity-80 !shadow-none";
+    }
+  }
+
+  &.bottom .back-to-top-or-refresh-btn {
+    --uno: "bottom-unset lg:right--45px right--35px";
+  }
+}
+
+.dock-edit-utility-item {
+  position: relative;
+  flex: none;
+}
+
+.dock-edit-utility-item--hidden :deep(.dock-item) {
+  opacity: 0.45;
+}
+
+.dock-edit-action-items {
+  position: absolute;
+  z-index: 10002;
+  display: flex;
+  gap: var(--bew-space-2);
+}
+
+.dock-edit-action-item {
+  position: relative;
+  flex: none;
+}
+
+.dock-edit-action-item__icon {
+  position: absolute;
+  width: var(--bew-icon-size-lg);
+  height: var(--bew-icon-size-lg);
+  flex: none;
+}
+
+.dock-edit-action-item__icon--refresh {
+  transform: rotate(90deg);
+}
+
+.dock-item {
+  --shadow-dark: 0 4px 30px 4px rgba(255, 255, 255, 0.6);
+  --shadow-active: 0 4px 30px var(--bew-theme-color-60);
+  --shadow-dark-active: 0 4px 20px rgba(255, 255, 255, 0.8);
+  --shadow-active-active: 0 4px 20px var(--bew-theme-color-80);
+
+  --uno: "relative transform active:important-scale-90 hover:scale-110";
+  --uno: "lg:w-45px w-35px";
+  --uno: "lg:lh-45px lh-35px";
+  --uno: "p-0 flex items-center justify-center";
+  --uno: "aspect-square relative";
+  --uno: "leading-0";
+  --uno: "rounded-full antialiased";
+  --uno: "bg-$bew-fill-alt hover:bg-$bew-fill-2 cursor-pointer";
+  --uno: "dark:bg-$bew-fill-1 dark-hover:bg-$bew-fill-4";
+
+  box-shadow: var(--bew-shadow-edge-glow-1), var(--bew-shadow-1);
+  transition:
+    transform 300ms var(--bew-ease-emphasized, cubic-bezier(0.34, 1.3, 0.64, 1)),
+    background 300ms ease,
+    color 300ms ease,
+    box-shadow 300ms ease,
+    opacity 300ms ease;
+
+  &:hover {
+    box-shadow:
+      var(--bew-shadow-edge-glow-1),
+      0 0 0 2px var(--bew-fill-2),
+      var(--bew-shadow-2);
+  }
+
+  &.disable-glowing-effect {
+    box-shadow: var(--bew-shadow-edge-glow-1), var(--bew-shadow-1) !important;
+  }
+
+  &.active {
+    --uno: "important-bg-$bew-theme-color text-white !dark:bg-white !dark:text-black";
+    --uno: "shadow-$shadow-active dark:shadow-$shadow-dark";
+    --uno: "active:shadow-$shadow-active-active dark-active:shadow-$shadow-dark-active";
+  }
+
+  &.inactive {
+    --uno: "opacity-80 !shadow-none";
+  }
+
+  :deep(.bew-local-icon) {
+    --uno: "lg:w-22px w-18px lg:h-22px h-18px block align-middle";
+  }
+}
+</style>

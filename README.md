@@ -4,7 +4,7 @@
 ![macOS](https://img.shields.io/badge/macOS-15%2B-slategray?logo=apple)
 ![Safari](https://img.shields.io/badge/Safari-18.5%2B-blue?logo=safari)
 
-[BewlyCat](https://github.com/keleus/BewlyCat) 的 Safari 适配版。基于 BewlyCat v1.7.6。
+[BewlyCat](https://github.com/keleus/BewlyCat) 的 Safari 版本。基于 BewlyCat v1.7.6。
 
 ## 安装
 

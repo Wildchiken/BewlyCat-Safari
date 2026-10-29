@@ -5,14 +5,19 @@ import { provide, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import Button from '~/components/Button.vue'
+import FirefoxScrollbar from '~/components/FirefoxScrollbar.vue'
 import Icon from '~/components/Icon.vue'
+import Radio from '~/components/Radio.vue'
+import TopBarModeSwitcher from '~/components/TopBar/components/TopBarModeSwitcher.vue'
 import type { BewlyAppProvider, SettingsNavigationTarget } from '~/composables/useAppProvider'
 import { DrawerType, UndoForwardState } from '~/composables/useAppProvider'
-import type { ConfirmDialogOptions } from '~/composables/useConfirmDialog'
+import type { ConfirmDialogOptions, ConfirmDialogToggleField } from '~/composables/useConfirmDialog'
 import { confirmDialogKey } from '~/composables/useConfirmDialog'
 import { useDark } from '~/composables/useDark'
 import { useLayoutEditMode } from '~/composables/useLayoutEditMode'
-import { BEWLY_MOUNTED, DRAWER_VIDEO_ENTER_PAGE_FULL, DRAWER_VIDEO_EXIT_PAGE_FULL, IFRAME_PAGE_SWITCH_BEWLY, IFRAME_PAGE_SWITCH_BILI, OVERLAY_SCROLL_BAR_SCROLL, OVERLAY_SCROLL_STATE_CHANGE } from '~/constants/globalEvents'
+import { BEWLY_MOUNTED, DRAWER_VIDEO_ENTER_PAGE_FULL, DRAWER_VIDEO_EXIT_PAGE_FULL, IFRAME_PAGE_SWITCH_BEWLY, IFRAME_PAGE_SWITCH_BILI, IFRAME_SEARCH_NAVIGATION, OVERLAY_SCROLL_BAR_SCROLL, OVERLAY_SCROLL_STATE_CHANGE } from '~/constants/globalEvents'
+import { isOriginalMomentsFeed } from '~/contentScripts/features/originalMomentsFeed'
+import { installScrollBridge } from '~/contentScripts/features/scrollBridge'
 import { HomeSubPage } from '~/contentScripts/views/Home/types'
 import { AppPage } from '~/enums/appEnums'
 import { settings, settingsReady } from '~/logic'
@@ -20,17 +25,18 @@ import type { DockItem } from '~/stores/mainStore'
 import { useMainStore } from '~/stores/mainStore'
 import { useSettingsStore } from '~/stores/settingsStore'
 import { useTopBarStore } from '~/stores/topBarStore'
+import { stripBilibiliLocalePathname } from '~/utils/bilibiliLocale'
 import { setOriginalBilibiliTopBarScrolled } from '~/utils/bilibiliTopBar'
+import { isFirefoxBuild } from '~/utils/buildTarget'
+import { SELECTION_FALLBACK_CLASS, supportsHighlightInheritance } from '~/utils/highlightInheritance'
 import { isHomePage, isInIframe, isNotificationPage, isSearchResultsPage, isVideoOrBangumiPage, openLinkToNewTab, queryDomUntilFound, scrollToTop } from '~/utils/main'
 import emitter from '~/utils/mitt'
-import { applyPendingSettingsMigrations, formatSettingsMigrationConfirmMessage, hasPendingSettingsMigrations } from '~/utils/settingsMigration'
+import { navigateToPluginSearchResults } from '~/utils/searchNavigation'
+import { applyPendingSettingsMigrations, formatSettingsMigrationConfirmMessage, getPendingSettingsMigrationChoices, hasPendingSettingsMigrations } from '~/utils/settingsMigration'
+import { isComponentVisible } from '~/utils/topBarBadge'
+import { canOpenInVideoDialog } from '~/utils/videoDialog'
 
 import { setupNecessarySettingsWatchers } from './necessarySettingsWatchers'
-
-// Check if current page is festival page
-function isFestivalPage(): boolean {
-  return /https?:\/\/(?:www\.)?bilibili\.com\/festival\/.*/.test(document.URL)
-}
 
 const mainStore = useMainStore()
 const settingsStore = useSettingsStore()
@@ -53,6 +59,11 @@ else {
 const showSettings = ref(false)
 const pendingSettingsNavigation = ref<SettingsNavigationTarget>()
 const searchFocusOverlayActive = ref(false)
+const pageWallpaperReady = ref(false)
+const useBlendedPageControls = computed(() => settings.value.enableFrostedGlass
+  && settings.value.frostedGlassBlurIntensity > 0
+  && !settings.value.disableBackground
+  && (pageWallpaperReady.value || (settings.value.useLinearGradientThemeColorBackground && isDark.value)))
 
 function openSettings(target?: SettingsNavigationTarget) {
   pendingSettingsNavigation.value = target
@@ -70,6 +81,7 @@ interface ConfirmDialogRequest {
   message: string
   title?: string
   confirmLabel?: string
+  toggleFields?: ConfirmDialogToggleField[]
   resolve: (confirmed: boolean) => void
   settled: boolean
 }
@@ -105,6 +117,7 @@ function showConfirmDialog(message: string, options: ConfirmDialogOptions = {}):
       message,
       title: options.title,
       confirmLabel: options.confirmLabel,
+      toggleFields: options.toggleFields,
       resolve,
       settled: false,
     }
@@ -149,6 +162,9 @@ onKeyStroke('Escape', (e: KeyboardEvent) => {
 onKeyStroke('Enter', (e: KeyboardEvent) => {
   if (!activeConfirmDialog.value)
     return
+  const target = e.target as HTMLElement | null
+  if (target?.closest('.bew-confirm-dialog__field'))
+    return
   e.preventDefault()
   e.stopPropagation()
   finishConfirmDialog(true)
@@ -179,16 +195,26 @@ async function promptSettingsMigrationIfNeeded() {
   if (!message)
     return
 
+  const toggleFields = getPendingSettingsMigrationChoices(record).map(choice => ({
+    id: choice.id,
+    label: String(t(choice.titleKey)),
+    value: choice.value,
+    enabledLabel: String(t('settings.chk_box.show')),
+    disabledLabel: String(t('settings.chk_box.hidden')),
+  }))
   const confirmed = await showConfirmDialog(message, {
     title: t('settings.maintenance.migrate_legacy_title'),
     confirmLabel: t('settings.maintenance.migrate_legacy_action'),
+    toggleFields,
   })
   if (!confirmed) {
     sessionStorage.setItem(SETTINGS_MIGRATION_PROMPT_DISMISSED_KEY, '1')
     return
   }
 
-  applyPendingSettingsMigrations(record)
+  applyPendingSettingsMigrations(record, Object.fromEntries(
+    toggleFields.map(field => [field.id, field.value]),
+  ))
 }
 
 // Get the 'page' query parameter from the URL
@@ -200,20 +226,18 @@ function getPageParam(): AppPage | null {
   return null
 }
 
-const activatedPage = ref<AppPage>(getPageParam() || (settings.value.dockItemsConfig.find(e => e.visible === true)?.page || AppPage.Home))
+function getDefaultAppPage(): AppPage {
+  return settings.value.dockItemsConfig.find(e => e.visible === true)?.page || AppPage.Home
+}
 
-// 监听 URL 变化,同步更新 activatedPage
-useEventListener(window, 'pushstate', () => {
-  const pageParam = getPageParam()
-  if (pageParam && pageParam !== activatedPage.value) {
-    activatedPage.value = pageParam
-  }
-})
-useEventListener(window, 'popstate', () => {
-  const pageParam = getPageParam()
-  if (pageParam && pageParam !== activatedPage.value) {
-    activatedPage.value = pageParam
-  }
+const activatedPage = ref<AppPage>(getPageParam() || getDefaultAppPage())
+const pageControlWallpaperMask = computed(() => {
+  if (!pageWallpaperReady.value)
+    return '0%'
+  const separateSearchWallpaper = activatedPage.value === AppPage.Search && settings.value.individuallySetSearchPageWallpaper
+  const enabled = separateSearchWallpaper ? settings.value.searchPageEnableWallpaperMasking : settings.value.enableWallpaperMasking
+  const opacity = separateSearchWallpaper ? settings.value.searchPageWallpaperMaskOpacity : settings.value.wallpaperMaskOpacity
+  return `${enabled && Number.isFinite(opacity) ? Math.min(100, Math.max(0, opacity)) : 0}%`
 })
 
 // 清理搜索相关的URL参数（仅在首页生效）
@@ -266,10 +290,36 @@ function getDefaultHomeSubPage(tabConfig: { page: HomeSubPage, visible: boolean 
   return HomeSubPage.ForYou
 }
 
-// 添加Home页面的子页面状态
-const homeActivatedPage = ref<HomeSubPage>(getDefaultHomeSubPage(settings.value.homePageTabVisibilityList))
-const homeActivatedPageTouched = ref<boolean>(false)
+function getHomeTabParam(url = new URL(window.location.href)): HomeSubPage | null {
+  const tab = url.searchParams.get('tab') as HomeSubPage | null
+  return isHomePage(url.href) && url.searchParams.get('page') === AppPage.Home
+    && tab && Object.values(HomeSubPage).includes(tab)
+    ? tab
+    : null
+}
+
+// URL 中的显式 tab 优先于设置中的默认首页标签。
+const initialHomeTab = getHomeTabParam()
+const homeActivatedPage = ref<HomeSubPage>(initialHomeTab ?? getDefaultHomeSubPage(settings.value.homePageTabVisibilityList))
+const homeActivatedPageTouched = ref<boolean>(initialHomeTab !== null)
 const isHomeTabSwitching = ref<boolean>(false)
+
+function syncNavigationFromUrl() {
+  // 注入层的 pushstate 事件在原生方法执行前派发，延后读取最终地址。
+  queueMicrotask(() => {
+    const page = getPageParam()
+    if (page)
+      activatedPage.value = page
+    if (page === AppPage.Home) {
+      const tab = getHomeTabParam()
+      homeActivatedPage.value = tab ?? getDefaultHomeSubPage(settings.value.homePageTabVisibilityList)
+      homeActivatedPageTouched.value = tab !== null
+    }
+  })
+}
+useEventListener(window, 'pushstate', syncNavigationFromUrl)
+useEventListener(window, 'popstate', syncNavigationFromUrl)
+
 watch(
   () => settings.value.homePageTabVisibilityList,
   (tabConfig) => {
@@ -342,7 +392,7 @@ function isLayoutEditCandidateVisible(element: HTMLElement) {
 }
 
 function isOriginalMomentsFeedPage() {
-  return window.location.hostname === 't.bilibili.com' && /^\/?$/.test(window.location.pathname)
+  return isOriginalMomentsFeed()
 }
 
 function refreshLayoutEditTargets() {
@@ -660,7 +710,7 @@ const layoutEditContextActions = computed<LayoutEditQuickSettingsAction[]>(() =>
         icon: 'mingcute:settings-3-line',
         menu: 'BewlyComponents',
         secondaryPage: 'topbar',
-        targetTitleKey: 'settings.auto_hide_top_bar',
+        targetTitleKey: 'settings.video_page_top_bar_config',
       },
     ]
   }
@@ -888,7 +938,7 @@ function openLayoutEditTopBarModeSettings() {
   openSettings({
     menu: 'BewlyComponents',
     secondaryPage: 'topbar',
-    targetTitleKey: 'settings.use_original_bilibili_topbar',
+    targetTitleKey: 'topbar.top_bar_switcher',
   })
 }
 
@@ -948,6 +998,19 @@ useEventListener(window, 'resize', scheduleLayoutEditTargetsRefresh)
 useEventListener(window, 'scroll', scheduleLayoutEditTargetsRefresh, { passive: true })
 onUnmounted(stopLayoutEditTargetObserver)
 const scrollViewportRef = ref<HTMLElement | null>(null)
+// Firefox 原生滚动条无法自定义外观，仅 Firefox 包提供可选的重绘滚动条
+const useFirefoxScrollbar = computed(() => isFirefoxBuild && settings.value.enableFirefoxScrollbarRepaint)
+watch(scrollViewportRef, (viewport, _previousViewport, onCleanup) => {
+  if (viewport && isHomePage() && !settings.value.useOriginalBilibiliHomepage)
+    onCleanup(installScrollBridge(viewport))
+}, { flush: 'post' })
+
+function handlePageBackgroundMouseDown(event: MouseEvent) {
+  // Only background elements bind this with .self. Avoid starting a native
+  // selection across the feed from its gutters, while keeping card text selectable.
+  if (activatedPage.value === AppPage.Home && event.button === 0)
+    event.preventDefault()
+}
 const loadMoreSentinelRef = ref<HTMLElement>() // ✅ IntersectionObserver 哨兵元素
 const handlePageRefresh = ref<() => void>()
 const handleReachBottom = ref<() => void>()
@@ -959,7 +1022,17 @@ const undoForwardState = ref<UndoForwardState>(UndoForwardState.Hidden)
 const canRefreshCurrentPage = computed((): boolean => {
   return activatedPage.value !== AppPage.Home || homeActivatedPage.value === HomeSubPage.ForYou || canRefreshHomeSubPage.value
 })
+let refreshScrollTimer: ReturnType<typeof setTimeout> | undefined
+
+function cancelPendingPageRefresh() {
+  clearTimeout(refreshScrollTimer)
+  refreshScrollTimer = undefined
+}
+
+onBeforeUnmount(cancelPendingPageRefresh)
+
 const handleThrottledPageRefresh = useThrottleFn(() => {
+  cancelPendingPageRefresh()
   if (!canRefreshCurrentPage.value)
     return
 
@@ -973,15 +1046,21 @@ const handleThrottledPageRefresh = useThrottleFn(() => {
   }
   else {
     handleBackToTop()
+    const refresh = handlePageRefresh.value
+    const deadline = performance.now() + 3000
     const checkScrollComplete = () => {
-      if (viewport.scrollTop === 0) {
-        handlePageRefresh.value?.()
+      refreshScrollTimer = undefined
+      if (!viewport.isConnected || viewport !== scrollViewportRef.value || refresh !== handlePageRefresh.value)
+        return
+
+      if (viewport.scrollTop <= 1) {
+        refresh?.()
       }
-      else {
-        setTimeout(checkScrollComplete, 50)
+      else if (performance.now() < deadline) {
+        refreshScrollTimer = setTimeout(checkScrollComplete, 50)
       }
     }
-    setTimeout(checkScrollComplete, 100)
+    refreshScrollTimer = setTimeout(checkScrollComplete, 100)
   }
 }, 500)
 const handleThrottledReachBottom = useThrottleFn(() => handleReachBottom.value?.(), 200)
@@ -990,6 +1069,7 @@ const handleThrottledPageUnRefresh = useThrottleFn(() => handleUndoRefresh.value
 const handleThrottledPageForwardRefresh = useThrottleFn(() => handleForwardRefresh.value?.(), 500)
 const topBarRef = ref()
 const reachTop = ref<boolean>(true)
+const scrollTop = ref<number>(0)
 
 watch(isHomeTabSwitching, (switching) => {
   if (switching)
@@ -1013,6 +1093,9 @@ watch(isHomeTabSwitching, (switching) => {
 
 const iframeDrawerURL = ref<string>('')
 const showIframeDrawer = ref<boolean>(false)
+// 每次打开分配新 id，替换已打开的弹窗时重新挂载 iframe
+const videoDialog = ref<{ id: number, url: string } | null>(null)
+let videoDialogId = 0
 
 // 添加活跃抽屉状态管理
 const activeDrawer = ref<DrawerType>(DrawerType.None)
@@ -1024,7 +1107,33 @@ function setActiveDrawer(drawer: DrawerType) {
 const hideUIForIframePhotoViewer = ref<boolean>(false)
 
 const iframePageRef = ref()
-useEventListener(window, 'message', ({ data }) => {
+// 只接受当前 Bewly 界面持有的 iframe 请求；消息仅携带关键词，不接受任意跳转 URL。
+useEventListener(window, 'message', ({ data, source, origin }) => {
+  if (data?.type !== IFRAME_SEARCH_NAVIGATION || typeof data.keyword !== 'string' || !data.keyword.trim())
+    return
+
+  const frames = document.getElementById('bewly')?.shadowRoot?.querySelectorAll<HTMLIFrameElement>('iframe')
+  const frame = Array.from(frames ?? []).find(iframe => iframe.contentWindow === source)
+  if (!frame)
+    return
+  try {
+    if (new URL(frame.src).origin !== origin || !/^https?:\/\/(?:[\w-]+\.)?bilibili\.com$/.test(origin))
+      return
+  }
+  catch {
+    return
+  }
+
+  navigateToPluginSearchResults(data.keyword)
+})
+useEventListener(window, 'message', ({ data, source }) => {
+  if (typeof data !== 'string')
+    return
+
+  const iframe = iframePageRef.value?.$el?.querySelector('iframe')
+  if (!iframe || source !== iframe.contentWindow)
+    return
+
   switch (data) {
     case IFRAME_PAGE_SWITCH_BEWLY:
       {
@@ -1056,58 +1165,6 @@ useEventListener(window, 'message', ({ data, source }) => {
   }
 })
 
-// 监听来自父页面的黑暗模式切换消息（用于iframe跨域场景）
-useEventListener(window, 'message', ({ data, source }) => {
-  // 只处理来自父窗口的消息
-  if (source !== window.parent)
-    return
-
-  const { type, isDark, darkModeBaseColor } = data
-
-  if (type === 'iframeDarkModeChange') {
-    // 在iframe环境中，只更新DOM样式，不修改用户的主题设置
-    // 避免覆盖用户选择的设备或定时主题模式
-    if (isInIframe()) {
-      // Check if we should apply selective dark mode (plugin UI only) on festival pages
-      const isSelectiveDark = isFestivalPage()
-
-      // 立即更新DOM样式，不修改settings.value.theme
-      if (isDark) {
-        // Always apply to plugin container
-        document.querySelector('#bewly')?.classList.add('dark')
-
-        // Only apply global styles if not on festival pages
-        if (!isSelectiveDark) {
-          document.documentElement.classList.add('dark')
-          document.body?.classList.add('dark')
-        }
-
-        // 如果提供了深色模式基准颜色，则应用它（仅应用到DOM，不修改设置）
-        if (darkModeBaseColor) {
-          document.documentElement.style.setProperty('--bew-dark-base-color', darkModeBaseColor)
-          // 对于Shadow DOM也需要设置
-          const bewlyContainer = document.getElementById('bewly')
-          if (bewlyContainer?.shadowRoot) {
-            const shadowHost = bewlyContainer
-            shadowHost.style.setProperty('--bew-dark-base-color', darkModeBaseColor)
-          }
-        }
-      }
-      else {
-        document.querySelector('#bewly')?.classList?.remove('dark')
-
-        // Only remove global classes if not in selective mode
-        if (!isSelectiveDark) {
-          document.documentElement.classList.remove('dark')
-          document.body?.classList.remove('dark')
-        }
-      }
-
-      // 强制重新计算样式
-      void document.documentElement.offsetHeight
-    }
-  }
-}, { passive: true })
 const iframePageURL = computed((): string => {
   // If the iframe is not the BiliBili homepage or in iframe, then don't show the iframe page
   if (!isHomePage(window.self.location.href) || isInIframe())
@@ -1136,6 +1193,18 @@ const showBewlyPage = computed((): boolean => {
 
   return isHomePage() && !settings.value.useOriginalBilibiliHomepage
 })
+
+// App outlives page components. Drop outgoing closures before the next page
+// registers its actions so evicted KeepAlive pages and their lists can be collected.
+watch([activatedPage, () => activatedPage.value === AppPage.Home ? homeActivatedPage.value : undefined, showBewlyPage], () => {
+  cancelPendingPageRefresh()
+  handlePageRefresh.value = undefined
+  handleReachBottom.value = undefined
+  handleUndoRefresh.value = undefined
+  handleForwardRefresh.value = undefined
+  undoForwardState.value = UndoForwardState.Hidden
+  canRefreshHomeSubPage.value = false
+}, { flush: 'sync' })
 
 // Keep the browser tab title in sync with the page selected from the Dock.
 // Search results manages its own keyword-aware title in SearchResults.vue.
@@ -1211,14 +1280,36 @@ function focusScrollViewport(options: { force?: boolean } = {}) {
 }
 
 const isFirstTimeActivatedPageChange = ref<boolean>(true)
+function syncNavigationUrl() {
+  const url = new URL(window.location.href)
+  // 停留在默认首页及默认标签时不写入参数，切换后再记录 page/tab。
+  const keepTab = activatedPage.value === AppPage.Home
+    && homeActivatedPage.value !== getDefaultHomeSubPage(settings.value.homePageTabVisibilityList)
+  const keepPage = keepTab
+    || activatedPage.value !== AppPage.Home
+    || getDefaultAppPage() !== AppPage.Home
+  if (keepPage)
+    url.searchParams.set('page', activatedPage.value)
+  else
+    url.searchParams.delete('page')
+  if (keepTab)
+    url.searchParams.set('tab', homeActivatedPage.value)
+  else
+    url.searchParams.delete('tab')
+  if (url.href !== window.location.href)
+    window.history.replaceState(window.history.state, '', url.href)
+}
+
+watch(homeActivatedPage, () => {
+  if (isHomePage() && activatedPage.value === AppPage.Home)
+    syncNavigationUrl()
+}, { immediate: true })
+
 watch(
   () => activatedPage.value,
   () => {
     if (!isFirstTimeActivatedPageChange.value) {
-      // Update the URL query parameter when activatedPage changes
-      const url = new URL(window.location.href)
-      url.searchParams.set('page', activatedPage.value)
-      window.history.replaceState({}, '', url.toString())
+      syncNavigationUrl()
     }
 
     scrollViewportRef.value?.scrollTo({ top: 0 })
@@ -1266,6 +1357,10 @@ function handleMetaHomeKeydown(e: KeyboardEvent) {
 }
 
 function handleDocumentScroll() {
+  if (scrollViewportRef.value && isHomePage() && !settings.value.useOriginalBilibiliHomepage)
+    return
+
+  scrollTop.value = window.scrollY
   reachTop.value = window.scrollY <= 0
 }
 
@@ -1303,9 +1398,6 @@ onMounted(() => {
   }
 
   if (isHomePage()) {
-    // Force overwrite Bilibili Evolved body tag & html tag background color
-    document.body.style.setProperty('background-color', 'unset', 'important')
-
     focusScrollViewport()
 
     // Windows/Linux: 监听 Home 键
@@ -1320,6 +1412,8 @@ onMounted(() => {
   }
 
   document.addEventListener('scroll', handleDocumentScroll, { passive: true })
+  // 刷新后停在半页时，首帧就要有正确的滚动状态（reachTop 与遮罩强度）
+  handleDocumentScroll()
   void promptSettingsMigrationIfNeeded()
 })
 
@@ -1412,22 +1506,31 @@ function handleOsScroll(_instance: any, event: Event) {
 
   // 使用 RAF 将所有 DOM 读取合并到下一帧
   rafId = requestAnimationFrame(() => {
-    const scrollTop = latestScrollTop
+    const frameScrollTop = latestScrollTop
 
-    emitter.emit(OVERLAY_SCROLL_BAR_SCROLL, scrollTop)
+    emitter.emit(OVERLAY_SCROLL_BAR_SCROLL, frameScrollTop)
     if (settings.value.enableTopBar && settings.value.useOriginalBilibiliTopBar)
-      setOriginalBilibiliTopBarScrolled(document, scrollTop > 0)
+      setOriginalBilibiliTopBarScrolled(document, frameScrollTop > 0)
 
     // 只在滚动距离超过阈值时更新状态
-    const scrollDelta = Math.abs(scrollTop - lastScrollTop)
+    const scrollDelta = Math.abs(frameScrollTop - lastScrollTop)
     if (scrollDelta > 50) {
-      lastScrollTop = scrollTop
+      lastScrollTop = frameScrollTop
     }
 
-    reachTop.value = scrollTop === 0
+    scrollTop.value = frameScrollTop
+    reachTop.value = frameScrollTop === 0
 
-    // ✅ 移除手动的"到达底部"检测，改用 IntersectionObserver（见 loadMoreSentinelRef）
-    // 这避免了在每次滚动时计算 threshold 和读取 scrollHeight/clientHeight
+    // IntersectionObserver 只在相交状态变化时回调，dock 切页等时机可能丢失边缘事件
+    // （如切走时哨兵处于相交中，切回后状态未发生跳变），滚动时按几何位置兜底触发
+    const viewportEl = scrollViewportRef.value
+    const sentinelEl = loadMoreSentinelRef.value
+    if (viewportEl && sentinelEl && !isHomeTabSwitching.value) {
+      const viewportRect = viewportEl.getBoundingClientRect()
+      const sentinelRect = sentinelEl.getBoundingClientRect()
+      if (sentinelRect.top <= viewportRect.bottom + 200 && sentinelRect.bottom >= viewportRect.top)
+        handleThrottledReachBottom()
+    }
 
     // 清除之前的滚动结束定时器
     if (scrollEndTimer) {
@@ -1508,12 +1611,31 @@ function openIframeDrawer(url: string) {
   showIframeDrawer.value = true
 }
 
+function openVideoDialog(url: string) {
+  if (!canOpenInVideoDialog(url)) {
+    openLinkToNewTab(url)
+    return
+  }
+
+  videoDialog.value = { id: ++videoDialogId, url }
+}
+
 /**
  * Checks if the current viewport has a scrollbar.
  * @returns {Promise<boolean>} Returns true if the viewport has a scrollbar, false otherwise.
  */
 async function haveScrollbar() {
   await nextTick()
+  // Read after the browser has laid out the newly rendered cards; reading right
+  // after the Vue flush forced that layout synchronously after every page load.
+  // Hidden tabs do not run animation frames, so a timeout keeps loading going.
+  await new Promise<void>((resolve) => {
+    const fallback = window.setTimeout(resolve, 100)
+    requestAnimationFrame(() => setTimeout(() => {
+      window.clearTimeout(fallback)
+      resolve()
+    }, 0))
+  })
   const viewport = scrollViewportRef.value
   if (!viewport)
     return false
@@ -1562,6 +1684,7 @@ provide<BewlyAppProvider>('BEWLY_APP', {
   mainAppRef,
   scrollViewportRef,
   reachTop,
+  scrollTop,
   searchFocusOverlayActive,
   handleBackToTop,
   handlePageRefresh,
@@ -1571,6 +1694,7 @@ provide<BewlyAppProvider>('BEWLY_APP', {
   handleForwardRefresh,
   undoForwardState,
   openIframeDrawer,
+  openVideoDialog,
   haveScrollbar,
   activeDrawer,
   setActiveDrawer,
@@ -1581,6 +1705,7 @@ provide<BewlyAppProvider>('BEWLY_APP', {
 if (settings.value.cleanUrlArgument) {
   const BASE_PARAMS_TO_REMOVE = new Set([
     'spm_id_from',
+    'hcfrom',
     'from_source',
     'msource',
     'bsource',
@@ -1630,17 +1755,20 @@ if (settings.value.cleanUrlArgument) {
 
     try {
       isCleaningUrl = true
+      const sourceUrl = window.location.href
       const currentUrl = new URL(window.location.href)
       let hasChanged = false
 
       for (const param of BASE_PARAMS_TO_REMOVE) {
+        if (param === 'tab' && getHomeTabParam(currentUrl))
+          continue
         if (currentUrl.searchParams.has(param)) {
           currentUrl.searchParams.delete(param)
           hasChanged = true
         }
       }
       const hostname = currentUrl.hostname
-      if ((hostname === 'bilibili.com' || hostname.endsWith('.bilibili.com')) && currentUrl.pathname.startsWith('/video/')) {
+      if ((hostname === 'bilibili.com' || hostname.endsWith('.bilibili.com')) && stripBilibiliLocalePathname(currentUrl.pathname).startsWith('/video/')) {
         for (const param of VIDEO_ONLY_PARAMS_TO_REMOVE) {
           if (currentUrl.searchParams.has(param)) {
             currentUrl.searchParams.delete(param)
@@ -1655,20 +1783,22 @@ if (settings.value.cleanUrlArgument) {
           .replace(/%3D/gi, '=')
           .replace(/%26/g, '&')
 
+        const applyCleanUrl = () => {
+          // 空闲回调执行前可能已切换 tab，旧地址不能覆盖新的导航状态。
+          if (window.location.href === sourceUrl) {
+            history.replaceState(history.state, '', newUrl)
+            lastCleanedUrl = window.location.href
+          }
+          isCleaningUrl = false
+          if (window.location.href !== newUrl)
+            scheduleCleanup()
+        }
         // 使用 requestIdleCallback 来避免阻塞页面加载
         if (window.requestIdleCallback) {
-          window.requestIdleCallback(() => {
-            history.replaceState(null, '', newUrl)
-            lastCleanedUrl = window.location.href
-            isCleaningUrl = false
-          })
+          window.requestIdleCallback(applyCleanUrl)
         }
         else {
-          setTimeout(() => {
-            history.replaceState(null, '', newUrl)
-            lastCleanedUrl = window.location.href
-            isCleaningUrl = false
-          }, 0)
+          setTimeout(applyCleanUrl, 0)
         }
       }
       else {
@@ -1743,6 +1873,7 @@ if (settings.value.cleanUrlArgument) {
     :class="{
       'dark': isDark,
       'bewly-wrapper--viewport': isHomePage() && !settings.useOriginalBilibiliHomepage,
+      [SELECTION_FALLBACK_CLASS]: !supportsHighlightInheritance(),
     }"
     text="$bew-text-1"
     @pointerdown.capture="blockOriginalLayoutInteraction"
@@ -1753,8 +1884,8 @@ if (settings.value.cleanUrlArgument) {
     @scroll.capture.passive="scheduleLayoutEditTargetsRefresh"
   >
     <!-- Background -->
-    <template v-if="showBewlyPage">
-      <AppBackground :activated-page="activatedPage" />
+    <template v-if="showBewlyPage && !settings.disableBackground">
+      <AppBackground :activated-page="activatedPage" @wallpaper-ready="pageWallpaperReady = $event" />
     </template>
 
     <!-- Settings -->
@@ -1949,6 +2080,14 @@ if (settings.value.cleanUrlArgument) {
       />
     </div>
 
+    <TopBarModeSwitcher
+      v-if="isInIframe()
+        && settings.enableTopBar
+        && settings.useOriginalBilibiliTopBar
+        && isComponentVisible('topBarSwitcher')"
+      native
+    />
+
     <div
       v-if="!settings.useOriginalBilibiliHomepage"
       pos="absolute top-0 left-0" w-full h-full
@@ -1960,19 +2099,30 @@ if (settings.value.cleanUrlArgument) {
         <template v-if="showBewlyPage">
           <div
             ref="scrollViewportRef"
-            class="bewly-scroll-viewport"
+            class="bewly-scroll-viewport bew-page-controls"
+            :class="{
+              'bew-page-controls--blend': useBlendedPageControls,
+              'bewly-scroll-viewport--repainted-scrollbar': useFirefoxScrollbar,
+            }"
+            :style="{
+              '--bew-control-wallpaper-mask': pageControlWallpaperMask,
+              // 视频弹窗打开时锁定背后列表，避免弹窗内滚轮与方向键越界滚动
+              'overflowY': videoDialog ? 'hidden' : undefined,
+            }"
             h-inherit of-y-auto of-x-hidden
             tabindex="-1"
             style="overscroll-behavior: contain;"
             @scroll.passive="handleNativeScroll"
+            @mousedown.self="handlePageBackgroundMouseDown"
           >
-            <main m-auto max-w="$bew-page-max-width">
+            <main m-auto max-w="$bew-page-max-width" @mousedown.self="handlePageBackgroundMouseDown">
               <div
                 p="t-[calc(var(--bew-top-bar-height)+10px)]" m-auto
                 w="lg:[calc(100%-200px)] [calc(100%-150px)]"
                 :style="settings.enableTopBar && settings.useOriginalBilibiliTopBar && !reachTop
                   ? { paddingTop: 'calc(var(--bew-top-bar-height) + 120px)' }
                   : undefined"
+                @mousedown.self="handlePageBackgroundMouseDown"
               >
                 <Transition name="page-fade">
                   <Component :is="pages[activatedPage]" :key="activatedPage" />
@@ -1985,9 +2135,10 @@ if (settings.value.cleanUrlArgument) {
           </div>
         </template>
       </Transition>
+      <FirefoxScrollbar v-if="useFirefoxScrollbar && showBewlyPage" :target="scrollViewportRef" />
 
       <Transition v-if="!showBewlyPage && iframePageURL && !isInIframe()" name="fade">
-        <IframePage ref="iframePageRef" :url="iframePageURL" />
+        <IframePage ref="iframePageRef" :url="iframePageURL" @scroll="topBarRef?.handleScroll($event)" />
       </Transition>
     </div>
 
@@ -1995,6 +2146,13 @@ if (settings.value.cleanUrlArgument) {
       v-if="showIframeDrawer"
       :url="iframeDrawerURL"
       @close="showIframeDrawer = false"
+    />
+
+    <VideoDialog
+      v-if="videoDialog"
+      :key="videoDialog.id"
+      :url="videoDialog.url"
+      @close="videoDialog = null"
     />
 
     <!-- Static confirm overlay: no Transition/Teleport (see finishConfirmDialog). -->
@@ -2025,6 +2183,22 @@ if (settings.value.cleanUrlArgument) {
           <p class="bew-confirm-dialog__message">
             {{ activeConfirmDialog.message }}
           </p>
+          <div
+            v-if="activeConfirmDialog.toggleFields?.length"
+            class="bew-confirm-dialog__fields"
+          >
+            <div
+              v-for="field in activeConfirmDialog.toggleFields"
+              :key="field.id"
+              class="bew-confirm-dialog__field"
+            >
+              <span class="bew-confirm-dialog__field-label">{{ field.label }}</span>
+              <Radio
+                v-model="field.value"
+                :label="field.value ? field.enabledLabel : field.disabledLabel"
+              />
+            </div>
+          </div>
         </div>
         <footer class="bew-confirm-dialog__footer">
           <Button type="tertiary" @click="finishConfirmDialog(true)">
@@ -2177,6 +2351,12 @@ if (settings.value.cleanUrlArgument) {
   border-radius: var(--bew-interactive-radius);
 }
 
+.top-bar-host--editing :deep([data-layout-edit-target="topbar-component"][data-layout-edit-active="true"]) {
+  outline: 1px solid var(--bew-theme-color);
+  outline-offset: -1px;
+  box-shadow: inset 0 0 0 1px var(--bew-theme-color-20);
+}
+
 .dock-sidebar-host--editing :deep([data-layout-edit-target]:not([data-layout-edit-active="true"])),
 .top-bar-host--editing :deep([data-layout-edit-target]:not([data-layout-edit-active="true"])) {
   opacity: 0.12 !important;
@@ -2262,7 +2442,10 @@ if (settings.value.cleanUrlArgument) {
 }
 
 .bew-confirm-dialog__body {
+  max-height: min(60vh, 480px);
   padding: var(--bew-space-2) var(--bew-space-8) var(--bew-space-2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .bew-confirm-dialog__message {
@@ -2272,6 +2455,32 @@ if (settings.value.cleanUrlArgument) {
   font-weight: var(--bew-font-weight-regular);
   line-height: var(--bew-line-height-body);
   white-space: pre-line;
+}
+
+.bew-confirm-dialog__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bew-space-2);
+  margin-top: var(--bew-space-4);
+}
+
+.bew-confirm-dialog__field {
+  display: flex;
+  min-height: 48px;
+  gap: var(--bew-space-4);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--bew-space-2) var(--bew-space-3);
+  background: var(--bew-fill-1);
+  border: 1px solid var(--bew-border-color);
+  border-radius: var(--bew-interactive-radius);
+}
+
+.bew-confirm-dialog__field-label {
+  color: var(--bew-text-1);
+  font-size: var(--bew-font-size-control);
+  font-weight: var(--bew-font-weight-semibold);
+  line-height: var(--bew-line-height-control);
 }
 
 .bew-confirm-dialog__footer {
@@ -2304,5 +2513,9 @@ if (settings.value.cleanUrlArgument) {
 .bewly-scroll-viewport {
   outline: none;
   scrollbar-gutter: stable;
+}
+
+.bewly-scroll-viewport--repainted-scrollbar {
+  scrollbar-width: none;
 }
 </style>

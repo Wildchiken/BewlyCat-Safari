@@ -5,8 +5,10 @@ import { useToast } from 'vue-toastification'
 
 import ArticleCard from '~/components/ArticleCard/ArticleCard.vue'
 import type { ContextMenuOption } from '~/components/ContextMenu.vue'
+import LiquidSegmentIndicator from '~/components/LiquidSegmentIndicator.vue'
+import Radio from '~/components/Radio.vue'
 import type { FavoriteResource } from '~/components/TopBar/types'
-import type { Video } from '~/components/VideoCard/types'
+import type { Video, VideoCardRemovedState } from '~/components/VideoCard/types'
 import VideoCardGrid from '~/components/VideoCardGrid.vue'
 import { useBewlyApp } from '~/composables/useAppProvider'
 import { useConfirmDialog } from '~/composables/useConfirmDialog'
@@ -18,7 +20,6 @@ import type { CollectedFavoriteSeason, CollectedFavoriteSeasonsResult, FavoriteS
 import { useTopBarStore } from '~/stores/topBarStore'
 import api from '~/utils/api'
 import {
-  enrichFavoriteSeasonMediaFaces,
   FAVORITE_SEASON_PAGE_SIZE,
   fetchFavoriteSeasonPage,
   mergeFavoriteSeasonPage,
@@ -63,6 +64,12 @@ const articleFavoriteOffset = ref<string>('')
 const isBatchManaging = ref<boolean>(false)
 const isBatchOperating = ref<boolean>(false)
 const selectedResourceKeys = ref<string[]>([])
+/**
+ * 卡片取消收藏遮罩状态：confirming 等待确认（尚未调用接口），removing 取消收藏中，
+ * removed 已取消收藏但保留原位可还原，restoring 还原中；记录所属收藏夹以便还原
+ */
+type RemoveStatus = 'confirming' | 'removing' | 'removed' | 'restoring'
+const removeStatuses = reactive(new Map<string, { categoryId: number, status: RemoveStatus }>())
 const targetCategory = ref<CategoryItem>()
 const batchTransferDialogVisible = ref<boolean>(false)
 const batchTransferAction = ref<BatchTransferAction>('copy')
@@ -70,12 +77,19 @@ const sidebarManageSection = ref<SidebarManageSection | null>(null)
 const selectedFolderIds = ref<number[]>([])
 const selectedSeasonIds = ref<number[]>([])
 const isSidebarOperating = ref<boolean>(false)
-const renameDialogVisible = ref<boolean>(false)
-const renameFolderId = ref<number>()
-const renameFolderTitle = ref<string>('')
+const editFolderDialogVisible = ref<boolean>(false)
+const editFolderId = ref<number>()
+const editFolderTitle = ref<string>('')
+const editFolderPublic = ref<boolean>(true)
 const itemMenuTarget = ref<{ type: SidebarManageSection, id: number } | null>(null)
 const itemMenuStyles = ref<CSSProperties>({})
 let contentRequestVersion = 0
+let disposed = false
+
+onBeforeUnmount(() => {
+  disposed = true
+  contentRequestVersion++
+})
 
 function notifyTopBarFavoritesChanged() {
   void topBarStore.notifyFavoritesChanged().catch((error) => {
@@ -84,9 +98,9 @@ function notifyTopBarFavoritesChanged() {
 }
 
 const favoriteViewOptions = computed(() => [
-  { label: t('favorites.video_section_title'), value: 'video' as const },
-  { label: t('favorites.season_section_title'), value: 'season' as const },
-  { label: t('favorites.article_section_title'), value: 'article' as const },
+  { label: t('favorites.view_video'), value: 'video' as const },
+  { label: t('favorites.view_season'), value: 'season' as const },
+  { label: t('favorites.view_article'), value: 'article' as const },
 ])
 
 const selectedContentTitle = computed(() => {
@@ -157,7 +171,7 @@ const selectedFolderCount = computed(() => selectedFolderIds.value.length)
 const selectedSeasonCount = computed(() => selectedSeasonIds.value.length)
 const isManagingFolder = computed(() => sidebarManageSection.value === 'folder')
 const isManagingSeason = computed(() => sidebarManageSection.value === 'season')
-const canRenameSelectedFolder = computed(() => selectedFolderIds.value.length === 1)
+const canEditSelectedFolder = computed(() => selectedFolderIds.value.length === 1)
 const isAllFoldersSelected = computed(() => {
   return editableFolderIds.value.length > 0
     && editableFolderIds.value.every(id => selectedFolderIds.value.includes(id))
@@ -172,7 +186,7 @@ const itemMenuOptions = computed((): ContextMenuOption[] => {
 
   if (itemMenuTarget.value.type === 'folder') {
     return [
-      { value: 'rename', label: t('favorites.rename_folder'), icon: 'i-tabler:edit' },
+      { value: 'edit', label: t('favorites.edit_folder'), icon: 'i-tabler:edit' },
       { value: 'delete', label: t('common.operation.delete'), icon: 'i-tabler:trash', danger: true },
     ]
   }
@@ -332,21 +346,26 @@ function toggleSelectAllSeasons() {
   selectedSeasonIds.value = isAllSeasonsSelected.value ? [] : collectedFavoriteSeasons.map(item => item.id)
 }
 
-function openRenameFolderDialog() {
-  if (!canRenameSelectedFolder.value || isSidebarOperating.value)
-    return
-
-  openSingleRenameFolder(selectedFolderIds.value[0])
+function isFavoriteFolderPrivate(folder: CategoryItem) {
+  return (folder.attr & 1) === 1
 }
 
-function openSingleRenameFolder(folderId: number) {
+function openEditFolderDialog() {
+  if (!canEditSelectedFolder.value || isSidebarOperating.value)
+    return
+
+  openSingleEditFolder(selectedFolderIds.value[0])
+}
+
+function openSingleEditFolder(folderId: number) {
   const folder = favoriteCategories.find(item => item.id === folderId)
   if (!folder)
     return
 
-  renameFolderId.value = folder.id
-  renameFolderTitle.value = folder.title
-  renameDialogVisible.value = true
+  editFolderId.value = folder.id
+  editFolderTitle.value = folder.title
+  editFolderPublic.value = !isFavoriteFolderPrivate(folder)
+  editFolderDialogVisible.value = true
 }
 
 function openItemMenu(type: SidebarManageSection, id: number, event: MouseEvent) {
@@ -367,18 +386,18 @@ function closeItemMenu() {
   itemMenuTarget.value = null
 }
 
-function closeRenameFolderDialog() {
-  renameDialogVisible.value = false
+function closeEditFolderDialog() {
+  editFolderDialogVisible.value = false
 }
 
-async function handleRenameFolderConfirm() {
-  const title = renameFolderTitle.value.trim()
+async function handleEditFolderConfirm() {
+  const title = editFolderTitle.value.trim()
   if (!title) {
-    toast.warning(t('favorites.rename_folder_empty'))
+    toast.warning(t('favorites.edit_folder_empty'))
     return
   }
 
-  const folderId = renameFolderId.value
+  const folderId = editFolderId.value
   if (!folderId)
     return
 
@@ -387,6 +406,7 @@ async function handleRenameFolderConfirm() {
     const res = await api.favorite.editFavoriteFolder({
       media_id: folderId,
       title,
+      privacy: editFolderPublic.value ? 0 : 1,
       csrf: getCSRF(),
     })
     if (res.code !== 0) {
@@ -395,9 +415,11 @@ async function handleRenameFolderConfirm() {
     }
 
     const folder = favoriteCategories.find(item => item.id === folderId)
-    if (folder)
+    if (folder) {
       folder.title = title
-    closeRenameFolderDialog()
+      folder.attr = editFolderPublic.value ? folder.attr & ~1 : folder.attr | 1
+    }
+    closeEditFolderDialog()
     exitSidebarManage()
     notifyTopBarFavoritesChanged()
   }
@@ -439,11 +461,22 @@ async function deleteFolders(ids: number[]) {
 async function unfavSeasons(ids: number[]) {
   const failedIds: number[] = []
   for (const seasonId of ids) {
+    const season = collectedFavoriteSeasons.find(item => item.id === seasonId)
+    if (!season) {
+      failedIds.push(seasonId)
+      continue
+    }
+
     try {
-      const res = await api.favorite.unfavFavoriteSeason({
-        season_id: seasonId,
-        csrf: getCSRF(),
-      })
+      const res = season.type === 11
+        ? await api.favorite.unfavFavoriteFolder({
+            media_id: seasonId,
+            csrf: getCSRF(),
+          })
+        : await api.favorite.unfavFavoriteSeason({
+            season_id: seasonId,
+            csrf: getCSRF(),
+          })
       if (res.code !== 0)
         failedIds.push(seasonId)
     }
@@ -520,8 +553,8 @@ async function handleItemMenuSelect(value: string | number) {
   closeItemMenu()
 
   if (target.type === 'folder') {
-    if (value === 'rename') {
-      openSingleRenameFolder(target.id)
+    if (value === 'edit') {
+      openSingleEditFolder(target.id)
       return
     }
 
@@ -588,30 +621,49 @@ function toggleBatchManage() {
   if (!canBatchManage.value)
     return
 
+  flushRemovedResources()
   exitSidebarManage()
   closeItemMenu()
   isBatchManaging.value = true
 }
 
-function getSelectedResourceParam() {
-  return selectedFavoriteResources.value.map(item => getFavoriteResourceKey(item)).join(',')
-}
+function removeResourcesFromList(categoryId: number, resourceKeys: string[], requestVersion: number) {
+  const category = favoriteCategories.find(item => item.id === categoryId)
+  if (category)
+    category.media_count = Math.max(0, category.media_count - resourceKeys.length)
 
-function removeSelectedResourcesFromList() {
-  const selectedKeys = new Set(selectedResourceKeys.value)
+  if (requestVersion !== contentRequestVersion || favoriteView.value !== 'video' || selectedCategory.value?.id !== categoryId)
+    return
+
+  const selectedKeys = new Set(resourceKeys)
   for (let index = favoriteResources.length - 1; index >= 0; index--) {
     if (selectedKeys.has(getFavoriteResourceKey(favoriteResources[index])))
       favoriteResources.splice(index, 1)
   }
-  if (selectedCategory.value)
-    selectedCategory.value.media_count = Math.max(0, selectedCategory.value.media_count - selectedKeys.size)
-  resetBatchSelection()
+  selectedResourceKeys.value = selectedResourceKeys.value.filter(key => !selectedKeys.has(key))
 }
 
-function increaseTargetCategoryCount(count: number) {
-  if (!targetCategory.value)
-    return
-  const category = favoriteCategories.find(item => item.id === targetCategory.value?.id)
+function spliceResourceFromList(resourceKey: string) {
+  const index = favoriteResources.findIndex(item => getFavoriteResourceKey(item) === resourceKey)
+  if (index !== -1)
+    favoriteResources.splice(index, 1)
+}
+
+/** 批量管理前清理遮罩：已取消收藏的卡片移出列表，避免被再次选中；待确认的直接取消 */
+function flushRemovedResources() {
+  for (const [key, state] of removeStatuses) {
+    if (state.status === 'confirming') {
+      removeStatuses.delete(key)
+    }
+    else if (state.status === 'removed') {
+      removeStatuses.delete(key)
+      spliceResourceFromList(key)
+    }
+  }
+}
+
+function increaseTargetCategoryCount(categoryId: number, count: number) {
+  const category = favoriteCategories.find(item => item.id === categoryId)
   if (category)
     category.media_count += count
 }
@@ -631,23 +683,27 @@ function selectTargetCategory(category: CategoryItem) {
 }
 
 async function handleBatchDelete() {
-  if (!selectedCategory.value || selectedCount.value === 0)
+  if (!selectedCategory.value || selectedCount.value === 0 || isBatchOperating.value)
     return
-  const result = await showConfirmDialog(t('favorites.batch_unfavorite_confirm', { count: selectedCount.value }))
-  if (!result)
-    return
-
+  const categoryId = selectedCategory.value.id
+  const resourceKeys = selectedFavoriteResources.value.map(getFavoriteResourceKey)
+  const requestVersion = contentRequestVersion
+  const accountId = getUserID()
   isBatchOperating.value = true
   try {
+    const result = await showConfirmDialog(t('favorites.batch_unfavorite_confirm', { count: resourceKeys.length }))
+    if (!result || requestVersion !== contentRequestVersion || getUserID() !== accountId)
+      return
+
     const res = await api.favorite.patchDelFavoriteResources({
-      resources: getSelectedResourceParam(),
-      media_id: selectedCategory.value.id,
+      resources: resourceKeys.join(','),
+      media_id: categoryId,
       csrf: getCSRF(),
     })
-    if (res.code === 0)
-      removeSelectedResourcesFromList()
-    if (res.code === 0)
+    if (res.code === 0 && getUserID() === accountId) {
+      removeResourcesFromList(categoryId, resourceKeys, requestVersion)
       notifyTopBarFavoritesChanged()
+    }
   }
   finally {
     isBatchOperating.value = false
@@ -655,23 +711,28 @@ async function handleBatchDelete() {
 }
 
 async function handleBatchMove() {
-  if (!selectedCategory.value || !targetCategory.value || selectedCount.value === 0)
+  if (!selectedCategory.value || !targetCategory.value || selectedCount.value === 0 || isBatchOperating.value)
     return
 
+  const categoryId = selectedCategory.value.id
+  const targetId = targetCategory.value.id
+  const resourceKeys = selectedFavoriteResources.value.map(getFavoriteResourceKey)
+  const requestVersion = contentRequestVersion
+  const accountId = getUserID()
   isBatchOperating.value = true
   try {
-    const movedCount = selectedCount.value
     const res = await api.favorite.moveFavoriteResources({
-      resources: getSelectedResourceParam(),
-      src_media_id: selectedCategory.value.id,
-      tar_media_id: targetCategory.value.id,
-      mid: getUserID(),
+      resources: resourceKeys.join(','),
+      src_media_id: categoryId,
+      tar_media_id: targetId,
+      mid: accountId,
       csrf: getCSRF(),
     })
-    if (res.code === 0) {
-      increaseTargetCategoryCount(movedCount)
-      removeSelectedResourcesFromList()
-      closeBatchManage()
+    if (res.code === 0 && getUserID() === accountId) {
+      increaseTargetCategoryCount(targetId, resourceKeys.length)
+      removeResourcesFromList(categoryId, resourceKeys, requestVersion)
+      if (requestVersion === contentRequestVersion)
+        closeBatchManage()
       notifyTopBarFavoritesChanged()
     }
   }
@@ -681,23 +742,30 @@ async function handleBatchMove() {
 }
 
 async function handleBatchCopy() {
-  if (!selectedCategory.value || !targetCategory.value || selectedCount.value === 0)
+  if (!selectedCategory.value || !targetCategory.value || selectedCount.value === 0 || isBatchOperating.value)
     return
 
+  const categoryId = selectedCategory.value.id
+  const targetId = targetCategory.value.id
+  const resourceKeys = selectedFavoriteResources.value.map(getFavoriteResourceKey)
+  const requestVersion = contentRequestVersion
+  const accountId = getUserID()
   isBatchOperating.value = true
   try {
-    const copiedCount = selectedCount.value
     const res = await api.favorite.copyFavoriteResources({
-      resources: getSelectedResourceParam(),
-      src_media_id: selectedCategory.value.id,
-      tar_media_id: targetCategory.value.id,
-      mid: getUserID(),
+      resources: resourceKeys.join(','),
+      src_media_id: categoryId,
+      tar_media_id: targetId,
+      mid: accountId,
       csrf: getCSRF(),
     })
-    if (res.code === 0) {
-      increaseTargetCategoryCount(copiedCount)
-      resetBatchSelection()
-      closeBatchTransferDialog()
+    if (res.code === 0 && getUserID() === accountId) {
+      increaseTargetCategoryCount(targetId, resourceKeys.length)
+      if (requestVersion === contentRequestVersion) {
+        const copiedKeys = new Set(resourceKeys)
+        selectedResourceKeys.value = selectedResourceKeys.value.filter(key => !copiedKeys.has(key))
+        closeBatchTransferDialog()
+      }
       notifyTopBarFavoritesChanged()
     }
   }
@@ -716,6 +784,7 @@ async function handleBatchTransferConfirm() {
 function resetContentState() {
   contentRequestVersion += 1
   resetBatchSelection()
+  removeStatuses.clear()
   currentPageNum.value = 1
   favoriteResources.length = 0
   favoriteArticles.length = 0
@@ -835,7 +904,9 @@ async function getFavoriteResources(
     : []
   if (searchScope.value === 'current')
     activatedCategoryCover.value = res.data.info.cover
-  favoriteResources.push(...pageItems)
+  // 取消收藏/撤销会让服务器页边界移动，按资源标识去重兜底
+  const existingKeys = new Set(favoriteResources.map(getFavoriteResourceKey))
+  favoriteResources.push(...pageItems.filter(item => !existingKeys.has(getFavoriteResourceKey(item))))
   noMoreContent.value = !res.data.has_more || pageItems.length === 0
 }
 
@@ -844,8 +915,9 @@ async function getFavoriteSeasonResources(
   pn: number,
   requestVersion = contentRequestVersion,
 ) {
-  const page = await fetchFavoriteSeasonPage(seasonId, pn, FAVORITE_SEASON_PAGE_SIZE)
-  if (requestVersion !== contentRequestVersion)
+  const accountId = getUserID()
+  const page = await fetchFavoriteSeasonPage(seasonId, pn, FAVORITE_SEASON_PAGE_SIZE, selectedSeason.value?.type)
+  if (disposed || requestVersion !== contentRequestVersion || getUserID() !== accountId)
     return
 
   if (!page.ok) {
@@ -858,14 +930,13 @@ async function getFavoriteSeasonResources(
     pn,
     pageMedias: page.pageMedias,
     mediaCount: page.mediaCount,
+    hasMore: page.hasMore,
     previousMedias: loadedSeasonMedias.value,
     pageSize: FAVORITE_SEASON_PAGE_SIZE,
   })
 
-  loadedSeasonMedias.value = await enrichFavoriteSeasonMediaFaces(merged.medias)
-  if (requestVersion !== contentRequestVersion)
-    return
-
+  // 合集卡片隐藏作者信息，直接展示列表，不额外请求 UP 主头像。
+  loadedSeasonMedias.value = merged.medias
   loadedSeasonComplete.value = !merged.hasMore
   noMoreContent.value = !merged.hasMore
   activatedCategoryCover.value = page.cover || selectedSeason.value?.cover || ''
@@ -924,6 +995,9 @@ async function getFavoriteArticles(
 }
 
 function handleFavoriteViewChange(view: FavoriteView) {
+  if (view === favoriteView.value)
+    return
+
   closeBatchManage()
   exitSidebarManage()
   closeItemMenu()
@@ -984,6 +1058,7 @@ async function handlePlayAll() {
     try {
       const result = await resolveFavoriteSeasonPlayAllUrl({
         seasonId: selectedSeason.value.id,
+        type: selectedSeason.value.type,
         link: selectedSeason.value.link,
         bvid: selectedSeason.value.bvid,
         mode: settings.value.collectedSeasonPlayAllMode,
@@ -1011,25 +1086,117 @@ function jumpToLoginPage() {
   location.href = 'https://passport.bilibili.com/login'
 }
 
-async function handleUnfavorite(favoriteResource: FavoriteResource) {
-  const result = await showConfirmDialog(
-    t('favorites.unfavorite_confirm'),
-  )
-  if (result) {
-    api.favorite.patchDelFavoriteResources({
-      resources: `${favoriteResource.id}:${favoriteResource.type}`,
-      media_id: selectedCategory.value?.id,
+// 取消收藏先在卡片上二次确认，确认后才调用接口
+function handleUnfavorite(favoriteResource: FavoriteResource) {
+  const resourceKey = getFavoriteResourceKey(favoriteResource)
+  if (!selectedCategory.value || removeStatuses.has(resourceKey))
+    return
+
+  removeStatuses.set(resourceKey, { categoryId: selectedCategory.value.id, status: 'confirming' })
+}
+
+function cancelUnfavorite(favoriteResource: FavoriteItem) {
+  const resourceKey = getFavoriteResourceKey(favoriteResource)
+  if (removeStatuses.get(resourceKey)?.status === 'confirming')
+    removeStatuses.delete(resourceKey)
+}
+
+async function confirmUnfavorite(favoriteResource: FavoriteItem) {
+  const resourceKey = getFavoriteResourceKey(favoriteResource)
+  const removeState = removeStatuses.get(resourceKey)
+  if (!removeState || removeState.status !== 'confirming')
+    return
+
+  const { categoryId } = removeState
+  const requestVersion = contentRequestVersion
+  const accountId = getUserID()
+  removeState.status = 'removing'
+  let success = false
+  try {
+    const res = await api.favorite.patchDelFavoriteResources({
+      resources: resourceKey,
+      media_id: categoryId,
       csrf: getCSRF(),
-    }).then((res) => {
-      if (res.code === 0) {
-        const resourceIndex = favoriteResources.indexOf(favoriteResource as FavoriteItem)
-        if (resourceIndex >= 0)
-          favoriteResources.splice(resourceIndex, 1)
-        if (selectedCategory.value)
-          selectedCategory.value.media_count = Math.max(0, selectedCategory.value.media_count - 1)
-        notifyTopBarFavoritesChanged()
-      }
     })
+    if (getUserID() !== accountId)
+      return
+    if (res.code !== 0) {
+      toast.error(res.message)
+      return
+    }
+
+    success = true
+    const category = favoriteCategories.find(item => item.id === categoryId)
+    if (category)
+      category.media_count = Math.max(0, category.media_count - 1)
+    // 卡片保留在原位，显示还原按钮
+    if (requestVersion === contentRequestVersion)
+      removeState.status = 'removed'
+    notifyTopBarFavoritesChanged()
+  }
+  catch (error) {
+    console.error('取消收藏失败:', error)
+  }
+  finally {
+    if (!success && removeStatuses.get(resourceKey) === removeState)
+      removeStatuses.delete(resourceKey)
+  }
+}
+
+async function restoreFavorite(favoriteResource: FavoriteItem) {
+  const resourceKey = getFavoriteResourceKey(favoriteResource)
+  const removeState = removeStatuses.get(resourceKey)
+  if (!removeState || removeState.status !== 'removed')
+    return
+
+  const { categoryId } = removeState
+  const requestVersion = contentRequestVersion
+  const accountId = getUserID()
+  removeState.status = 'restoring'
+  try {
+    const res = await api.favorite.updateVideoFavorites({
+      rid: favoriteResource.id,
+      type: favoriteResource.type,
+      add_media_ids: String(categoryId),
+      del_media_ids: '',
+      csrf: getCSRF(),
+    })
+    if (getUserID() !== accountId)
+      return
+    if (res.code !== 0) {
+      toast.error(res.message)
+      return
+    }
+
+    const category = favoriteCategories.find(item => item.id === categoryId)
+    if (category)
+      category.media_count += 1
+    if (requestVersion === contentRequestVersion)
+      removeStatuses.delete(resourceKey)
+    notifyTopBarFavoritesChanged()
+  }
+  catch (error) {
+    console.error('重新收藏失败:', error)
+  }
+  finally {
+    if (removeState.status === 'restoring')
+      removeState.status = 'removed'
+  }
+}
+
+function getFavoriteRemovedState(item: FavoriteItem): VideoCardRemovedState | undefined {
+  const removeState = removeStatuses.get(getFavoriteResourceKey(item))
+  if (!removeState)
+    return undefined
+
+  const confirming = removeState.status === 'confirming' || removeState.status === 'removing'
+  return {
+    message: confirming ? t('favorites.unfavorite_item_confirm') : t('favorites.unfavorited'),
+    confirming,
+    pending: removeState.status === 'removing' || removeState.status === 'restoring',
+    onConfirm: () => void confirmUnfavorite(item),
+    onCancel: () => cancelUnfavorite(item),
+    onUndo: () => void restoreFavorite(item),
   }
 }
 
@@ -1060,18 +1227,18 @@ function transformFavoriteItem(item: FavoriteItem): Video {
 function normalizeSeasonMedia(item: FavoriteSeasonMedia): FavoriteItem {
   return {
     id: item.id,
-    type: 2,
+    type: item.type ?? 2,
     title: item.title,
     cover: item.cover,
-    intro: '',
-    page: 1,
+    intro: item.intro || '',
+    page: item.page ?? 1,
     duration: item.duration,
     upper: {
       mid: item.upper.mid,
       name: item.upper.name,
       face: item.upper.face || '',
     },
-    attr: 0,
+    attr: item.attr ?? 0,
     cnt_info: {
       ...item.cnt_info,
       play_switch: 0,
@@ -1081,7 +1248,7 @@ function normalizeSeasonMedia(item: FavoriteSeasonMedia): FavoriteItem {
     link: item.bvid ? `https://www.bilibili.com/video/${item.bvid}` : '',
     ctime: item.pubtime,
     pubtime: item.pubtime,
-    fav_time: item.pubtime,
+    fav_time: item.fav_time ?? item.pubtime,
     bv_id: item.bvid,
     bvid: item.bvid,
     season: null,
@@ -1135,19 +1302,21 @@ function transformFavoriteArticle(item: FavoriteArticle) {
 
       <div
         v-if="favoriteView === 'video'"
-        class="favorites-toolbar"
+        class="favorites-toolbar bew-toolbar-controls"
       >
-        <div class="toolbar-search-group">
+        <div v-if="!isBatchManaging" class="toolbar-search-group">
           <Select v-model="searchScope" class="search-scope-select" :options="searchScopeOptions" @change="handleSearchScopeChange" />
           <Input
             v-model="keyword"
             class="favorites-search-input"
             :placeholder="searchScope === 'all' ? t('favorites.global_search_placeholder') : t('favorites.search_placeholder')"
+            :aria-label="searchScope === 'all' ? t('favorites.global_search_placeholder') : t('favorites.search_placeholder')"
             @enter="handleSearch"
           />
           <Button
-            type="primary"
+            type="secondary"
             :disabled="searchScope === 'all' && !keyword.trim()"
+            :aria-label="$t('common.search')"
             @click="handleSearch"
           >
             <template #left>
@@ -1180,7 +1349,7 @@ function transformFavoriteArticle(item: FavoriteArticle) {
               </template>
               {{ isAllCurrentPageSelected ? t('favorites.batch_unselect_all') : t('favorites.batch_select_all') }}
             </Button>
-            <span class="batch-selected-count">
+            <span class="batch-selected-count bew-toolbar-note">
               {{ t('favorites.batch_selected_count', { count: selectedCount }) }}
             </span>
             <Button
@@ -1257,6 +1426,7 @@ function transformFavoriteArticle(item: FavoriteArticle) {
           :more-btn="favoriteView === 'video' && !isBatchManaging"
           :hide-author="favoriteView === 'season'"
           :card-click-handler="isBatchManaging ? handleFavoriteCardClick : undefined"
+          :get-removed-state="favoriteView === 'video' ? getFavoriteRemovedState : undefined"
           :cover-top-left-always-visible="isBatchManaging"
           enable-row-padding
           @refresh="() => handlePageRefresh?.()"
@@ -1283,19 +1453,31 @@ function transformFavoriteArticle(item: FavoriteArticle) {
       </template>
 
       <Dialog
-        v-if="renameDialogVisible"
-        :title="t('favorites.rename_folder_dialog_title')"
+        v-if="editFolderDialogVisible"
+        :title="t('favorites.edit_folder_dialog_title')"
         width="420px"
         append-to-bewly-body
         :loading="isSidebarOperating"
-        @close="closeRenameFolderDialog"
-        @confirm="handleRenameFolderConfirm"
+        @close="closeEditFolderDialog"
+        @confirm="handleEditFolderConfirm"
       >
-        <Input
-          v-model="renameFolderTitle"
-          :placeholder="t('favorites.rename_folder_placeholder')"
-          @enter="handleRenameFolderConfirm"
-        />
+        <div class="folder-edit-dialog">
+          <Input
+            v-model="editFolderTitle"
+            :placeholder="t('favorites.edit_folder_placeholder')"
+            @enter="handleEditFolderConfirm"
+          />
+          <div class="folder-visibility-field">
+            <div class="folder-visibility-copy">
+              <strong>{{ t('favorites.folder_visibility') }}</strong>
+              <span>{{ t('favorites.folder_visibility_desc') }}</span>
+            </div>
+            <Radio
+              v-model="editFolderPublic"
+              :label="editFolderPublic ? t('favorites.folder_public') : t('favorites.folder_private')"
+            />
+          </div>
+        </div>
       </Dialog>
 
       <Dialog
@@ -1327,8 +1509,14 @@ function transformFavoriteArticle(item: FavoriteArticle) {
     </main>
 
     <aside class="favorites-old-sidebar">
-      <div class="favorites-sidebar-panel">
-        <div class="favorites-sidebar-background">
+      <div
+        class="favorites-sidebar-panel"
+        :class="{
+          'favorites-sidebar-panel--cover': settings.enableSidebarCoverBlur,
+          'bew-page-sidebar': !settings.enableSidebarCoverBlur,
+        }"
+      >
+        <div v-if="settings.enableSidebarCoverBlur" class="favorites-sidebar-background" aria-hidden="true">
           <div />
           <img
             v-if="selectedContentCover"
@@ -1359,16 +1547,38 @@ function transformFavoriteArticle(item: FavoriteArticle) {
           </div>
 
           <div class="sidebar-mode-row">
-            <Select
-              v-model="favoriteView"
-              class="favorite-view-select"
-              :options="favoriteViewOptions"
-              @change="handleFavoriteViewChange"
-            />
-            <Tooltip v-if="favoriteView !== 'article'" :content="t('favorites.sidebar_manage')" placement="left" type="dark">
+            <div
+              class="favorite-view-control bew-segment-control bew-segment-control--surface"
+              :class="{
+                'bew-segment-control--static': !settings.enableLiquidSegmentIndicator,
+                'bew-segment-control--solid': !settings.enableFrostedGlass,
+              }"
+              role="group"
+              :aria-label="t('favorites.view_type')"
+            >
+              <LiquidSegmentIndicator
+                v-if="settings.enableLiquidSegmentIndicator"
+                :active-key="favoriteView"
+                :white="settings.enableSidebarCoverBlur"
+              />
+              <button
+                v-for="option in favoriteViewOptions"
+                :key="option.value"
+                type="button"
+                class="favorite-view-option bew-segment-control__item"
+                data-segment-item
+                :data-active="favoriteView === option.value ? 'true' : undefined"
+                :aria-pressed="favoriteView === option.value"
+                @click="handleFavoriteViewChange(option.value)"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+            <Tooltip :content="t('favorites.sidebar_manage')" placement="left" type="dark">
               <button
                 class="sidebar-manage-toggle"
                 :class="{ active: sidebarManageSection !== null }"
+                :disabled="favoriteView === 'article'"
                 :aria-label="t('favorites.sidebar_manage')"
                 @click="toggleCurrentSidebarManage"
               >
@@ -1383,12 +1593,12 @@ function transformFavoriteArticle(item: FavoriteArticle) {
               {{ isAllFoldersSelected ? t('favorites.unselect_all') : t('favorites.select_all') }}
             </button>
             <span class="sidebar-selected-count">{{ selectedFolderCount }}</span>
-            <Tooltip :content="t('favorites.rename_folder')" placement="left" type="dark">
+            <Tooltip :content="t('favorites.edit_folder')" placement="left" type="dark">
               <button
                 class="sidebar-manage-action"
-                :disabled="!canRenameSelectedFolder || isSidebarOperating"
-                :aria-label="t('favorites.rename_folder')"
-                @click="openRenameFolderDialog"
+                :disabled="!canEditSelectedFolder || isSidebarOperating"
+                :aria-label="t('favorites.edit_folder')"
+                @click="openEditFolderDialog"
               >
                 <span i-tabler:edit />
               </button>
@@ -1425,9 +1635,10 @@ function transformFavoriteArticle(item: FavoriteArticle) {
 
           <Button
             v-else-if="favoriteView !== 'article'"
-            color="rgba(255,255,255,.35)"
+            type="secondary"
+            :color="settings.enableSidebarCoverBlur ? 'rgba(255,255,255,.35)' : undefined"
             block
-            text-color="white"
+            :text-color="settings.enableSidebarCoverBlur ? 'white' : undefined"
             strong
             :disabled="searchScope === 'all' || isResolvingSeasonPlayAll"
             @click="handlePlayAll"
@@ -1451,7 +1662,7 @@ function transformFavoriteArticle(item: FavoriteArticle) {
                 }"
               >
                 <button
-                  class="category-nav-item"
+                  class="category-nav-item category-nav-item--folder"
                   :class="{
                     active: !isManagingFolder && selectedCategory?.id === item.id,
                     selected: isManagingFolder && selectedFolderIds.includes(item.id),
@@ -1469,6 +1680,17 @@ function transformFavoriteArticle(item: FavoriteArticle) {
                   />
                   <span v-else class="category-icon" i-tabler:folder />
                   <span class="category-title">{{ item.title }}</span>
+                  <Tooltip
+                    :content="isFavoriteFolderPrivate(item) ? t('favorites.folder_private') : t('favorites.folder_public')"
+                    placement="left"
+                    type="dark"
+                  >
+                    <span
+                      class="category-visibility"
+                      :class="isFavoriteFolderPrivate(item) ? 'i-tabler:lock' : 'i-tabler:world'"
+                      :aria-label="isFavoriteFolderPrivate(item) ? t('favorites.folder_private') : t('favorites.folder_public')"
+                    />
+                  </Tooltip>
                   <span class="category-count">{{ item.media_count }}</span>
                 </button>
                 <button
@@ -1594,7 +1816,34 @@ function transformFavoriteArticle(item: FavoriteArticle) {
   height: 230px;
   margin: var(--bew-space-10) 0;
   overflow: hidden;
+  color: var(--favorites-sidebar-text);
+
+  --favorites-sidebar-text: var(--bew-text-1);
+  --favorites-sidebar-text-muted: var(--bew-control-surface-muted);
+  --favorites-sidebar-text-subtle: var(--bew-control-surface-muted);
+  --favorites-sidebar-hover: var(--bew-fill-2);
+  --favorites-sidebar-active: var(--bew-fill-2);
+  --favorites-sidebar-active-text: var(--bew-text-1);
+  --favorites-sidebar-control: var(--bew-fill-1);
+  --favorites-sidebar-control-hover: var(--bew-fill-2);
+  --favorites-sidebar-control-border: var(--bew-border-color);
+  --favorites-sidebar-scrollbar: var(--bew-fill-3);
+}
+
+.favorites-sidebar-panel--cover {
+  --favorites-sidebar-text: #fff;
+  --favorites-sidebar-text-muted: rgba(255, 255, 255, 0.82);
+  --favorites-sidebar-text-subtle: rgba(255, 255, 255, 0.72);
+  --favorites-sidebar-hover: rgba(255, 255, 255, 0.16);
+  --favorites-sidebar-active: rgba(255, 255, 255, 0.35);
+  --favorites-sidebar-active-text: #fff;
+  --favorites-sidebar-control: rgba(255, 255, 255, 0.28);
+  --favorites-sidebar-control-hover: rgba(255, 255, 255, 0.36);
+  --favorites-sidebar-control-border: rgba(255, 255, 255, 0.32);
+  --favorites-sidebar-scrollbar: rgba(255, 255, 255, 0.35);
+  background: transparent;
   border-radius: var(--bew-panel-radius);
+  box-shadow: none;
 }
 
 .favorites-sidebar-background {
@@ -1606,7 +1855,7 @@ function transformFavoriteArticle(item: FavoriteArticle) {
 .favorites-sidebar-background div {
   position: absolute;
   z-index: 1;
-  background: var(--bew-fill-4);
+  background: var(--bew-sidebar-cover-mask);
   inset: 0;
 }
 
@@ -1638,11 +1887,20 @@ function transformFavoriteArticle(item: FavoriteArticle) {
   flex: 0 0 auto;
   width: 100%;
   overflow: hidden;
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--favorites-sidebar-text-subtle);
   background: var(--bew-skeleton);
   border-radius: var(--bew-media-radius);
   box-shadow: 0 16px 24px -12px rgba(0, 0, 0, 0.36);
   aspect-ratio: 16 / 9;
+}
+
+.favorites-sidebar-content > :deep(.b-button) {
+  flex: 0 0 auto;
+  min-height: var(--bew-control-height);
+}
+
+.favorites-sidebar-title {
+  flex-shrink: 0;
 }
 
 .favorites-sidebar-cover img {
@@ -1659,49 +1917,62 @@ function transformFavoriteArticle(item: FavoriteArticle) {
 .favorites-sidebar-title h3,
 .favorites-sidebar-title p {
   margin: 0;
-  color: #fff;
+  color: var(--favorites-sidebar-text);
+}
+
+.favorites-sidebar-panel--cover .favorites-sidebar-title h3,
+.favorites-sidebar-panel--cover .favorites-sidebar-title p {
   text-shadow: 0 0 12px rgba(0, 0, 0, 0.3);
 }
 
 .favorites-sidebar-title p {
   margin-top: var(--bew-space-1);
+  color: var(--favorites-sidebar-text-muted);
   font-size: var(--bew-font-size-caption);
   line-height: var(--bew-line-height-caption);
   opacity: 0.76;
 }
 
-.favorite-view-select {
+.favorite-view-control {
+  --bew-segment-surface-background: var(--favorites-sidebar-control);
+  --bew-segment-surface-shadow: none;
+  --bew-control-border-color: var(--favorites-sidebar-control-border);
+  --bew-control-radius: var(--bew-interactive-radius);
+  --bew-control-item-radius: var(--bew-radius-sm);
+  --bew-segment-item-color: var(--favorites-sidebar-text-muted);
+  --bew-segment-item-hover-current-color: var(--favorites-sidebar-text);
+  --bew-segment-item-hover-current-bg: var(--favorites-sidebar-hover);
+  --bew-segment-item-focus-color: var(--favorites-sidebar-text);
+  --bew-segment-item-focus-bg: var(--favorites-sidebar-hover);
+  --bew-segment-item-current-color: var(--favorites-sidebar-active-text);
+  --bew-segment-item-active-bg: var(--favorites-sidebar-active);
+  --bew-segment-item-active-shadow: none;
+  --bew-liquid-indicator-radius: var(--bew-radius-sm);
+  --bew-liquid-indicator-bg: var(--favorites-sidebar-active);
+  --bew-liquid-indicator-shadow: none;
+  --bew-segment-item-focus-ring-color: var(--bew-theme-color-80);
+
   flex: 1 1 auto;
   min-width: 0;
 }
 
-.favorite-view-select :deep(.select-trigger) {
-  box-sizing: border-box;
-  height: var(--bew-control-height);
-  padding: 0 0 0 var(--bew-space-3);
-  overflow: hidden;
-  color: #fff;
-  font-size: var(--bew-font-size-control);
-  font-weight: var(--bew-font-weight-semibold);
-  line-height: var(--bew-line-height-control);
-  background: rgba(255, 255, 255, 0.28);
-  border: 1px solid rgba(255, 255, 255, 0.32);
-  backdrop-filter: var(--bew-filter-glass-1);
+.favorites-sidebar-panel--cover .favorite-view-control {
+  --bew-segment-item-active-bg: var(--bew-segment-item-active-bg-white);
+  --bew-segment-item-active-shadow: var(--bew-segment-item-active-shadow-white);
+  --bew-liquid-indicator-bg: var(--bew-segment-item-active-bg-white);
+  --bew-liquid-indicator-shadow: var(--bew-segment-item-active-shadow-white);
+  --bew-segment-item-focus-ring-color: rgba(255, 255, 255, 0.72);
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.24);
 }
 
-.favorite-view-select :deep(.select-trigger:hover) {
-  background: rgba(255, 255, 255, 0.36);
+.favorite-view-control.bew-segment-control--solid {
+  --bew-segment-surface-background: var(--favorites-sidebar-control);
 }
 
-.favorite-view-select :deep(.select-arrow-slot) {
-  align-self: stretch;
-  width: var(--bew-control-height);
-  margin-left: var(--bew-space-2);
-}
-
-.favorite-view-select :deep(.select-arrow) {
-  border-color: #fff;
+.favorite-view-option {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-inline: var(--bew-space-2);
 }
 
 .sidebar-mode-row {
@@ -1719,10 +1990,10 @@ function transformFavoriteArticle(item: FavoriteArticle) {
   width: 28px;
   height: 28px;
   padding: 0;
-  color: #fff;
-  border: 0;
+  color: var(--favorites-sidebar-text);
+  border: var(--bew-control-border-width) solid var(--favorites-sidebar-control-border);
   border-radius: var(--bew-interactive-radius);
-  background: rgba(255, 255, 255, 0.35);
+  background: var(--favorites-sidebar-control);
   backdrop-filter: var(--bew-filter-glass-1);
   cursor: pointer;
   transition:
@@ -1732,15 +2003,21 @@ function transformFavoriteArticle(item: FavoriteArticle) {
 }
 
 .sidebar-manage-toggle {
+  box-sizing: border-box;
   width: var(--bew-control-height);
   height: var(--bew-control-height);
 }
 
-.sidebar-manage-toggle:hover,
-.sidebar-manage-toggle.active,
+.sidebar-manage-toggle:hover:not(:disabled),
+.sidebar-manage-toggle.active:not(:disabled),
 .sidebar-manage-action:hover:not(:disabled) {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.42);
+  color: var(--favorites-sidebar-text);
+  background: var(--favorites-sidebar-control-hover);
+}
+
+.sidebar-manage-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 
 .sidebar-manage-action.danger:hover:not(:disabled) {
@@ -1775,7 +2052,7 @@ function transformFavoriteArticle(item: FavoriteArticle) {
   min-width: 0;
   padding: 0;
   overflow: hidden;
-  color: rgba(255, 255, 255, 0.82);
+  color: var(--favorites-sidebar-text-muted);
   font-size: var(--bew-font-size-control);
   font-weight: var(--bew-font-weight-medium);
   line-height: var(--bew-line-height-control);
@@ -1786,11 +2063,11 @@ function transformFavoriteArticle(item: FavoriteArticle) {
 }
 
 .sidebar-manage-select:hover {
-  color: #fff;
+  color: var(--favorites-sidebar-text);
 }
 
 .sidebar-selected-count {
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--favorites-sidebar-text-subtle);
   font-size: var(--bew-font-size-caption);
   line-height: var(--bew-line-height-caption);
 }
@@ -1829,15 +2106,15 @@ function transformFavoriteArticle(item: FavoriteArticle) {
 }
 
 .category-item:hover:not(.row-disabled):not(.row-active) {
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--favorites-sidebar-hover);
 }
 
 .category-item.row-active {
-  background: rgba(255, 255, 255, 0.35);
+  background: var(--favorites-sidebar-active);
 }
 
 .category-item.row-selected {
-  background: color-mix(in oklab, var(--bew-theme-color), transparent 52%);
+  background: var(--favorites-sidebar-active);
 }
 
 .item-more-btn,
@@ -1853,7 +2130,7 @@ function transformFavoriteArticle(item: FavoriteArticle) {
   place-items: center;
   padding: 0;
   overflow: hidden;
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--favorites-sidebar-text-subtle);
   border: 0;
   border-radius: var(--bew-interactive-radius);
   background: transparent;
@@ -1864,8 +2141,8 @@ function transformFavoriteArticle(item: FavoriteArticle) {
 }
 
 .item-more-btn:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.16);
+  color: var(--favorites-sidebar-text);
+  background: var(--favorites-sidebar-hover);
 }
 
 .item-more-btn span {
@@ -1882,7 +2159,7 @@ function transformFavoriteArticle(item: FavoriteArticle) {
   width: 100%;
   min-height: var(--bew-control-height);
   padding: 0 var(--bew-space-3);
-  color: rgba(255, 255, 255, 0.82);
+  color: var(--favorites-sidebar-text-muted);
   font-size: var(--bew-font-size-control);
   font-weight: var(--bew-font-weight-medium);
   line-height: var(--bew-line-height-control);
@@ -1899,24 +2176,28 @@ function transformFavoriteArticle(item: FavoriteArticle) {
     background-color var(--bew-duration-fast) var(--bew-ease-standard);
 }
 
+.category-nav-item--folder {
+  grid-template-columns: 20px minmax(0, 1fr) auto auto;
+}
+
 .category-item:hover .category-nav-item:not(:disabled):not(.active) {
-  color: #fff;
+  color: var(--favorites-sidebar-text);
   background: transparent;
 }
 
 .category-nav-item.active {
-  color: #fff;
+  color: var(--favorites-sidebar-active-text);
   background: transparent;
 }
 
 .category-nav-item.selected {
-  color: #fff;
+  color: var(--favorites-sidebar-active-text);
   background: transparent;
 }
 
 .article-nav-item {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.35);
+  color: var(--favorites-sidebar-active-text);
+  background: var(--favorites-sidebar-active);
 }
 
 .category-nav-item.locked {
@@ -1934,6 +2215,13 @@ function transformFavoriteArticle(item: FavoriteArticle) {
   height: var(--bew-control-icon-size);
 }
 
+.category-visibility {
+  width: var(--bew-icon-size-sm);
+  height: var(--bew-icon-size-sm);
+  color: var(--favorites-sidebar-text-subtle);
+  opacity: 1;
+}
+
 .category-title {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1946,19 +2234,53 @@ function transformFavoriteArticle(item: FavoriteArticle) {
   opacity: 0.72;
 }
 
+.folder-edit-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bew-space-4);
+}
+
+.folder-visibility-field {
+  display: flex;
+  gap: var(--bew-space-4);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--bew-space-3) var(--bew-space-4);
+  border: 1px solid var(--bew-border-color);
+  border-radius: var(--bew-interactive-radius);
+  background: var(--bew-fill-1);
+}
+
+.folder-visibility-copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bew-space-1);
+  min-width: 0;
+}
+
+.folder-visibility-copy strong {
+  color: var(--bew-text-1);
+  font-size: var(--bew-font-size-control);
+  font-weight: var(--bew-font-weight-semibold);
+  line-height: var(--bew-line-height-control);
+}
+
+.folder-visibility-copy span {
+  color: var(--bew-text-2);
+  font-size: var(--bew-font-size-caption);
+  line-height: var(--bew-line-height-caption);
+}
+
 .favorites-toolbar {
   display: flex;
   gap: var(--bew-space-2);
   align-items: center;
   flex-wrap: wrap;
   justify-content: space-between;
+  box-sizing: border-box;
   width: 100%;
   max-width: 100%;
   margin: var(--bew-space-3) 0;
-  padding: 0;
-  background: transparent;
-  border-radius: 0;
-  box-shadow: none;
 }
 
 .toolbar-search-group,
@@ -2116,7 +2438,7 @@ function transformFavoriteArticle(item: FavoriteArticle) {
   }
 
   &::-webkit-scrollbar-thumb {
-    background-color: rgba(255, 255, 255, 0.35);
+    background-color: var(--favorites-sidebar-scrollbar);
     border-radius: var(--bew-radius-full);
   }
 

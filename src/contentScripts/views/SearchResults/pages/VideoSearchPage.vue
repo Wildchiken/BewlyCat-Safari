@@ -136,7 +136,7 @@ async function performSearch(loadMore: boolean): Promise<boolean> {
 
   const success = await search(
     keyword,
-    params => api.search.searchVideo(params),
+    (params, request) => api.search.searchVideo(params, request),
     {
       page: targetPage,
       page_size: SEARCH_PAGE_SIZES.video,
@@ -155,7 +155,7 @@ async function performSearch(loadMore: boolean): Promise<boolean> {
     return false
 
   const rawData = lastResponse.value.data
-  const incomingList = Array.isArray(rawData?.result) ? rawData.result : []
+  const incomingList: any[] = Array.isArray(rawData?.result) ? rawData.result : []
 
   // 过滤广告和应用时间过滤
   const filteredList = applyVideoTimeFilter(incomingList.filter(item => !isAdVideo(item)))
@@ -220,7 +220,7 @@ async function handlePageChange(page: number) {
 
   const success = await search(
     keyword,
-    params => api.search.searchVideo(params),
+    (params, request) => api.search.searchVideo(params, request),
     {
       page,
       page_size: SEARCH_PAGE_SIZES.video,
@@ -238,7 +238,7 @@ async function handlePageChange(page: number) {
   }
 
   const rawData = lastResponse.value.data
-  const incomingList = Array.isArray(rawData?.result) ? rawData.result : []
+  const incomingList: any[] = Array.isArray(rawData?.result) ? rawData.result : []
 
   // 过滤广告和应用时间过滤
   const filteredList = applyVideoTimeFilter(incomingList.filter(item => !isAdVideo(item)))
@@ -300,6 +300,10 @@ defineExpose({
   currentPage,
   totalPages,
 })
+
+function getVideoKey(video: any) {
+  return video.aid || video.id
+}
 </script>
 
 <template>
@@ -316,7 +320,7 @@ defineExpose({
         :no-more-content="paginationMode === 'scroll' && !hasMore"
         :request-failed="!!error"
         :transform-item="transformVideo"
-        :get-item-key="(video: any) => video.aid || video.id"
+        :get-item-key="getVideoKey"
         :empty-description="$t('common.no_data')"
         :show-loading-more-skeleton="false"
         :show-load-more-indicator="paginationMode === 'scroll' && (results?.length || 0) > 0 && hasMore"

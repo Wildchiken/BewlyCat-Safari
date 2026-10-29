@@ -18,7 +18,7 @@ interface Props {
 type WallpaperMode = 'buildIn' | 'byUrl'
 
 const { t } = useI18n()
-const uploadWallpaperRef = ref(null)
+const uploadWallpaperRef = ref<HTMLInputElement | null>(null)
 
 const isGlobal = computed(() => props.type === 'global')
 const isBuildInWallpaper = computed(() => {
@@ -89,12 +89,24 @@ function fileToBase64(inputFile: File) {
   })
 }
 
+function triggerUploadWallpaper() {
+  uploadWallpaperRef.value?.click()
+}
+
+function handleLocalWallpaperClick() {
+  const localWallpaperUrl = localSettings.value.locallyUploadedWallpaper?.url
+  if (localWallpaperUrl)
+    changeWallpaper(localWallpaperUrl)
+  else
+    triggerUploadWallpaper()
+}
+
 async function handleUploadWallpaper(e: Event) {
-  if (uploadWallpaperRef.value)
-    (uploadWallpaperRef.value as HTMLInputElement).click()
-  const file = (e.target as HTMLInputElement)?.files?.[0]
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
   if (!file)
     return
+  input.value = ''
 
   compressAndResizeImage(file, 2560, 1440, 0.9, async (compressedFile: File) => {
     try {
@@ -251,23 +263,24 @@ onMounted(() => {
               <picture
                 class="group bew-settings-option--lift"
                 :class="{ 'selected-wallpaper': isGlobal
-                  ? settings.wallpaper === (localWallpaperDisplayUrl || localSettings.locallyUploadedWallpaper?.url)
-                  : settings.searchPageWallpaper === (localWallpaperDisplayUrl || localSettings.locallyUploadedWallpaper?.url) }"
+                  ? settings.wallpaper === localSettings.locallyUploadedWallpaper?.url
+                  : settings.searchPageWallpaper === localSettings.locallyUploadedWallpaper?.url }"
                 aspect-video bg="$bew-fill-1" rounded="$bew-radius" overflow-hidden
                 un-border="4 transparent" w-full
                 flex="~ items-center justify-center"
-                @click="changeWallpaper(localWallpaperDisplayUrl || localSettings.locallyUploadedWallpaper?.url || '')"
+                @click="handleLocalWallpaperClick"
               >
                 <div
                   v-if="localSettings.locallyUploadedWallpaper"
                   class="opacity-0 group-hover:opacity-100" duration-300
-                  pos="absolute top-4px right-4px" z-1 text="14px" flex="~ gap-1"
+                  pos="absolute top-1 right-1" z-1 flex="~ gap-1"
+                  :style="{ fontSize: 'var(--bew-font-size-control)', lineHeight: 'var(--bew-line-height-control)' }"
                 >
                   <button
                     style="backdrop-filter: var(--bew-filter-glass-1);"
                     bg="$bew-content" rounded-full w-28px h-28px
                     grid place-items-center
-                    @click="handleUploadWallpaper"
+                    @click.stop="triggerUploadWallpaper"
                   >
                     <i i-mingcute:edit-2-line />
                   </button>
@@ -275,7 +288,7 @@ onMounted(() => {
                     style="backdrop-filter: var(--bew-filter-glass-1);"
                     bg="$bew-content" rounded-full w-28px h-28px
                     grid place-items-center
-                    @click="handleRemoveCustomWallpaper"
+                    @click.stop="handleRemoveCustomWallpaper"
                   >
                     <i i-mingcute:delete-2-line />
                   </button>
@@ -283,7 +296,6 @@ onMounted(() => {
                 <div
                   v-if="!localSettings.locallyUploadedWallpaper"
                   absolute w-full h-full grid place-items-center
-                  @click="handleUploadWallpaper"
                 >
                   <div
                     i-tabler:photo-up

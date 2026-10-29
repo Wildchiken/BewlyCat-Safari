@@ -30,7 +30,6 @@ const sideBarContentRef = useDelayedHover({
 
 const hoveringDockItem = reactive<HoveringDockItem>({
   themeMode: false,
-  settings: false,
 })
 
 watch(() => settings.value.autoHideSidebar, (newValue) => {
@@ -187,7 +186,12 @@ function toggleHideSidebar(hide: boolean) {
 }
 
 .sidebar-edge {
-  --uno: "absolute top-0 w-14px h-full hover:w-60px duration-300";
+  --uno: "absolute top-0 h-full duration-300";
+  width: var(--bew-edge-hit-area);
+
+  &:hover {
+    width: var(--bew-edge-hover-area);
+  }
 
   &-left {
     --uno: "left-0";

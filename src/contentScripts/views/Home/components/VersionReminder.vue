@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import Button from '~/components/Button.vue'
 import Dialog from '~/components/Dialog.vue'
+import Picture from '~/components/Picture.vue'
+import { USAGE_GUIDE_COVER, USAGE_GUIDE_URL } from '~/constants/usageGuide'
 import { settings } from '~/logic'
 
 import { version } from '../../../../../package.json'
@@ -46,7 +48,7 @@ function acknowledgeCurrentVersion() {
     v-if="dialogVisible"
     :title="$t('version_reminder.title')"
     :desc="$t('version_reminder.current_version', { version })"
-    width="480px"
+    width="720px"
     max-width="calc(100vw - 32px)"
     content-max-height="calc(100vh - 180px)"
     :show-footer="false"
@@ -54,38 +56,61 @@ function acknowledgeCurrentVersion() {
     @close="dialogVisible = false"
   >
     <div class="version-reminder-dialog">
-      <p class="version-reminder-dialog__intro">
-        {{ $t('version_reminder.description') }}
-      </p>
-
-      <div class="version-reminder-dialog__links">
+      <div class="version-reminder-dialog__columns">
         <a
-          :href="GITHUB_RELEASES_URL"
+          :href="USAGE_GUIDE_URL"
           target="_blank"
           rel="noopener noreferrer"
-          class="version-reminder-dialog__link"
+          class="version-reminder-dialog__guide"
         >
-          <span class="version-reminder-dialog__link-icon version-reminder-dialog__link-icon--github" i-mingcute:github-line />
-          <span>
-            <strong>{{ $t('version_reminder.github_releases') }}</strong>
-            <small>{{ $t('version_reminder.github_releases_desc') }}</small>
+          <span class="version-reminder-dialog__guide-cover">
+            <Picture :src="USAGE_GUIDE_COVER" :alt="$t('version_reminder.usage_guide_desc')" loading="eager" />
+            <span class="version-reminder-dialog__guide-play" i-mingcute:play-fill />
           </span>
-          <span class="version-reminder-dialog__arrow" i-mingcute:external-link-line />
+          <span class="version-reminder-dialog__guide-body">
+            <span>
+              <strong>{{ $t('version_reminder.usage_guide') }}</strong>
+              <small>{{ $t('version_reminder.usage_guide_desc') }}</small>
+            </span>
+            <span class="version-reminder-dialog__arrow" i-mingcute:external-link-line />
+          </span>
         </a>
 
-        <a
-          :href="BILIBILI_DYNAMIC_URL"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="version-reminder-dialog__link"
-        >
-          <span class="version-reminder-dialog__link-icon version-reminder-dialog__link-icon--bilibili" i-mingcute:bilibili-line />
-          <span>
-            <strong>{{ $t('version_reminder.bilibili_dynamic') }}</strong>
-            <small>{{ $t('version_reminder.bilibili_dynamic_desc') }}</small>
-          </span>
-          <span class="version-reminder-dialog__arrow" i-mingcute:external-link-line />
-        </a>
+        <div class="version-reminder-dialog__updates">
+          <p class="version-reminder-dialog__intro">
+            {{ $t('version_reminder.description') }}
+          </p>
+
+          <div class="version-reminder-dialog__links">
+            <a
+              :href="GITHUB_RELEASES_URL"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="version-reminder-dialog__link"
+            >
+              <span class="version-reminder-dialog__link-icon version-reminder-dialog__link-icon--github" i-mingcute:github-line />
+              <span>
+                <strong>{{ $t('version_reminder.github_releases') }}</strong>
+                <small>{{ $t('version_reminder.github_releases_desc') }}</small>
+              </span>
+              <span class="version-reminder-dialog__arrow" i-mingcute:external-link-line />
+            </a>
+
+            <a
+              :href="BILIBILI_DYNAMIC_URL"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="version-reminder-dialog__link"
+            >
+              <span class="version-reminder-dialog__link-icon version-reminder-dialog__link-icon--bilibili" i-mingcute:bilibili-line />
+              <span>
+                <strong>{{ $t('version_reminder.bilibili_dynamic') }}</strong>
+                <small>{{ $t('version_reminder.bilibili_dynamic_desc') }}</small>
+              </span>
+              <span class="version-reminder-dialog__arrow" i-mingcute:external-link-line />
+            </a>
+          </div>
+        </div>
       </div>
 
       <Button type="primary" block center @click="acknowledgeCurrentVersion">
@@ -173,6 +198,99 @@ function acknowledgeCurrentVersion() {
   padding: var(--bew-space-0-5) 0 0;
 }
 
+.version-reminder-dialog__columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--bew-space-4);
+  align-items: stretch;
+}
+
+.version-reminder-dialog__updates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bew-space-3);
+  min-width: 0;
+  padding-left: var(--bew-space-4);
+  border-left: 1px solid var(--bew-border-color);
+}
+
+.version-reminder-dialog__guide {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--bew-text-1);
+  background: var(--bew-fill-1);
+  border: 1px solid var(--bew-border-color);
+  border-radius: var(--bew-card-radius);
+  transition:
+    color 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease;
+}
+
+.version-reminder-dialog__guide:hover {
+  color: var(--bew-theme-color);
+  background: var(--bew-theme-color-10);
+  border-color: var(--bew-theme-color);
+}
+
+.version-reminder-dialog__guide-cover {
+  position: relative;
+  display: block;
+}
+
+.version-reminder-dialog__guide-cover :deep(picture) {
+  border-radius: 0;
+}
+
+.version-reminder-dialog__guide-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 44px;
+  height: 44px;
+  padding: 10px;
+  color: white;
+  background: rgb(0 0 0 / 45%);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  transition:
+    background-color 160ms ease,
+    transform 160ms ease;
+}
+
+.version-reminder-dialog__guide:hover .version-reminder-dialog__guide-play {
+  background: var(--bew-theme-color);
+  transform: translate(-50%, -50%) scale(1.06);
+}
+
+.version-reminder-dialog__guide-body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  gap: var(--bew-space-3);
+  align-items: center;
+  padding: var(--bew-space-3);
+}
+
+.version-reminder-dialog__guide strong,
+.version-reminder-dialog__guide small {
+  display: block;
+}
+
+.version-reminder-dialog__guide strong {
+  font-size: var(--bew-font-size-body);
+  font-weight: var(--bew-font-weight-semibold);
+  line-height: var(--bew-line-height-body);
+}
+
+.version-reminder-dialog__guide small {
+  margin-top: var(--bew-space-1);
+  color: var(--bew-text-3);
+  font-size: var(--bew-font-size-control);
+  line-height: var(--bew-line-height-control);
+}
+
 .version-reminder-dialog__intro {
   margin: 0;
   color: var(--bew-text-2);
@@ -181,7 +299,9 @@ function acknowledgeCurrentVersion() {
 }
 
 .version-reminder-dialog__links {
+  flex: 1;
   display: grid;
+  grid-auto-rows: 1fr;
   gap: var(--bew-space-3);
 }
 
@@ -266,6 +386,19 @@ function acknowledgeCurrentVersion() {
 .version-reminder-leave-to {
   opacity: 0;
   transform: translateY(12px);
+}
+
+@media (max-width: 640px) {
+  .version-reminder-dialog__columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .version-reminder-dialog__updates {
+    padding-top: var(--bew-space-4);
+    padding-left: 0;
+    border-top: 1px solid var(--bew-border-color);
+    border-left: 0;
+  }
 }
 
 @media (max-width: 560px) {

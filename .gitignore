@@ -1,4 +1,5 @@
 .DS_Store
+.cache/
 .idea/
 .vite-ssg-dist
 .vite-ssg-temp
@@ -17,7 +18,7 @@ dist
 dist-ssr
 extension/
 extension-firefox/
-extension-safari/dist/
+extension-safari/
 node_modules
 release/
 *-web-ext-profile

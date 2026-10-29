@@ -93,9 +93,16 @@
   // #region Layering
   // Keep application overlays in a predictable order. Drawers and emergency
   // prompts use separate, intentionally higher layers outside this modal stack.
+  --bew-z-original-top-bar: 1002;
+  // 保留原站头像（2）高于下拉面板（1）的内部顺序。
+  --bew-z-original-top-bar-popover: 1;
+  // 首页沉浸式模式覆盖顶栏与 Dock，低于设置窗口、对话框和 Toast。
+  --bew-z-immersive-feed: 10002;
   --bew-z-settings-host: 10003;
   --bew-z-settings: 10004;
   --bew-z-settings-popover: 10005;
+  // 设置内的浮动 Tooltip 需高于设置窗口，避免被其背景遮挡。
+  --bew-z-settings-tooltip: 10006;
   --bew-z-dialog: 10010;
   --bew-z-confirm-dialog: 10011;
   --bew-z-image-viewer: 10012;
@@ -124,10 +131,15 @@
   --bew-control-background: var(--bew-elevated);
   --bew-control-background-white: color-mix(in oklab, var(--bew-elevated-solid), transparent 80%);
   --bew-control-border-color: transparent;
+  // Pointer-entry zones intentionally extend beyond the visible Dock/side bar.
+  --bew-edge-hit-area: 14px;
+  --bew-edge-hover-area: 60px;
   // #endregion
 
   // Search and logo stay one step larger (still full capsule/circle).
   // Compact TopBar thumbnails use a tighter radius than full-size media cards.
+  // Space reserved for search before expanding the pinned channel strip.
+  --bew-top-bar-pinned-search-reserve: 320px;
   --bew-top-bar-primary-control-height: 46px;
   --bew-top-bar-primary-control-radius: var(--bew-radius-full);
   --bew-top-bar-media-width: 160px;
@@ -136,17 +148,16 @@
   --bew-top-bar-media-aspect-ratio: 16 / 9;
   --bew-top-bar-media-radius: var(--bew-radius-half);
   --bew-top-bar-media-continuous-radius: var(--bew-radius-md);
-  --bew-top-bar-media-title-size: var(--bew-font-size-control);
-  --bew-top-bar-media-title-line-height: var(--bew-line-height-control);
+  // Pop 媒体标题（收藏 / 历史 / 稍后再看 / 动态共用）对齐 B 站原网页弹层实测
+  // 字号（14/20），不在全局排版层级内，字重沿用全局 regular
+  --bew-top-bar-media-title-size: 14px;
+  --bew-top-bar-media-title-line-height: 20px;
   --bew-top-bar-media-title-weight: var(--bew-font-weight-regular);
-  --bew-top-bar-media-title-emphasis-size: var(--bew-font-size-title);
-  --bew-top-bar-media-title-emphasis-line-height: var(--bew-line-height-title);
   --bew-top-bar-media-author-weight: var(--bew-font-weight-semibold);
   --bew-top-bar-media-meta-size: var(--bew-font-size-caption);
   --bew-top-bar-media-meta-line-height: var(--bew-line-height-caption);
   --bew-top-bar-brand-logo-width: 66px;
   --bew-top-bar-brand-logo-height: 22px;
-  --bew-top-bar-brand-logo-compact-size: 24px;
 
   // Interaction tokens aligned with home tab buttons
   --bew-segment-item-hover-bg: var(--bew-fill-1);
@@ -230,6 +241,9 @@
   --bew-theme-color-80: color-mix(in oklab, var(--bew-theme-color), transparent 20%);
   --bew-theme-color-90: color-mix(in oklab, var(--bew-theme-color), transparent 10%);
 
+  // 由主题色推导的滤镜，用于让 B 站 Canvas/SVGA 动效跟随主题色（见 utils/actionAnimationTheme.ts）
+  --bew-action-animation-filter: none;
+
   --bew-info-color: hsl(198 93% 60%);
   --bew-info-color-10: color-mix(in oklab, var(--bew-info-color), transparent 90%);
   --bew-info-color-20: color-mix(in oklab, var(--bew-info-color), transparent 80%);
@@ -301,6 +315,8 @@
   // #endregion
 
   --bew-content-opacity: 0.68;
+  // Wallpaper-facing panels keep more of the page's color than floating Pop surfaces.
+  --bew-popover-wallpaper-background: color-mix(in oklab, var(--bew-elevated-solid) 40%, transparent);
 
   // #region Content colors, used to buttons, cards, popover and so on
   // Variable names that don't contain `solid` are used to frosted glass effect elements
@@ -345,11 +361,16 @@
 
   // You can use this as the frosted glass mask, such as on the right side of the "Watch Later" page panel and the "Favorites" page panel
   --bew-fill-4: rgb(131 131 145 / 60%);
+  --bew-sidebar-cover-mask: var(--bew-fill-4);
 
   --bew-fill-alt: rgb(255 255 255 / 45%);
 
   // This color is used in skeleton screens
   --bew-skeleton: var(--bew-fill-2);
+
+  // 媒体浮层按钮的暗色遮罩底（图片画廊导航、评论缩略图删除等），明暗主题同值。
+  --bew-media-button-bg: rgb(15 20 25 / 72%);
+  --bew-media-button-bg-hover: rgb(15 20 25 / 88%);
   // #endregion
 
   --bew-border-color: rgb(131 131 145 / 18%);
@@ -437,6 +458,7 @@
   --bew-fill-2: rgb(131 131 145 / 20%);
   --bew-fill-3: rgb(131 131 145 / 30%);
   --bew-fill-4: rgb(131 131 145 / 40%);
+  --bew-sidebar-cover-mask: rgb(0 0 0 / 58%);
   --bew-fill-alt: var(--bew-fill-1);
 
   --bew-border-color: rgb(131 131 145 / 16%);
@@ -482,6 +504,31 @@
   --bew-shadow-3: 0 0 0 transparent;
   --bew-shadow-4: 0 0 0 transparent;
 }
+
+// 页面独立控件共用同一底色；变量在页面容器上计算，跟随当前背景和主题。
+.bew-page-controls {
+  --bew-control-surface-opacity: 100%;
+  // 无背景时保持中性底色；主题色染色只用于壁纸上的半透明控件，让其贴合背景。
+  --bew-control-surface-tint: var(--bew-content-solid);
+  --bew-control-surface-background: color-mix(
+    in oklab,
+    var(--bew-control-surface-tint) var(--bew-control-surface-opacity),
+    transparent
+  );
+  --bew-control-surface-hover: color-mix(in oklab, var(--bew-control-surface-background) 92%, var(--bew-text-1));
+  --bew-control-surface-border: color-mix(in oklab, var(--bew-text-1) 12%, transparent);
+  --bew-control-surface-edge: inset 0 0 0 1px var(--bew-control-surface-border);
+  --bew-control-surface-filter: none;
+  --bew-control-surface-muted: color-mix(in oklab, var(--bew-text-1) 90%, var(--bew-content-solid));
+}
+
+.bew-page-controls--blend {
+  // 壁纸遮罩越强，控件需要额外叠加的底色越少，避免浅背景上出现一整块白色。
+  --bew-control-surface-opacity: calc(64% - var(--bew-control-wallpaper-mask, 0%) * 0.4);
+  --bew-control-surface-tint: color-mix(in oklab, var(--bew-content-alt-solid) 94%, var(--bew-theme-color));
+  --bew-control-surface-filter: var(--bew-filter-glass-1);
+}
+
 :root.bewly-design,
 :root.bewly-design * {
   --brand_pink: var(--bew-theme-color);

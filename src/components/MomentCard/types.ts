@@ -4,10 +4,12 @@ export interface DisplayRichTextSegment {
   imageUrl?: string
   url?: string
   size?: number
+  isLottery?: boolean
 }
 
 export interface DisplayForwardVideo {
   title: string
+  desc?: string
   cover: string
   duration: string
   play: string
@@ -15,12 +17,6 @@ export interface DisplayForwardVideo {
   url: string
   aid?: number | string
   bvid?: string
-}
-
-export interface WatchLaterTarget {
-  aid?: number | string
-  bvid?: string
-  epid?: number
 }
 
 export interface DisplayAdditional {
@@ -32,6 +28,12 @@ export interface DisplayAdditional {
   isUpRecommendation: boolean
   isVideoReservation: boolean
   isLiveReservation: boolean
+  /** 投票附加卡（ADDITIONAL_TYPE_VOTE），由卡片内的投票组件展示 */
+  isVote?: boolean
+  /** 投票业务 id */
+  voteId?: string
+  /** 投票截止时间戳（秒）；0 表示未知 */
+  voteEndTime?: number
   /** 预约卡片的业务 id（接口字段 rid） */
   reservationId?: string
   /** 接口返回的当前预约人数 */
@@ -46,15 +48,29 @@ export interface DisplayMoment {
   publishedAt: number
   title: string
   text: string
+  /** desc 继承自视频/专栏元数据（简介）而非发布者本人文字，卡片内做弱化展示 */
+  descInherited?: boolean
   richText: DisplayRichTextSegment[]
   images: string[]
   /** 与 images 对齐的宽高比（宽/高），用于多图横向画廊计算共用高度 */
   imageRatios?: Array<number | undefined>
+  /** 接口将图片主体标记为九宫格；仅 3/6/9 图时按完整行网格展示 */
+  isNineGrid?: boolean
   time: string
   likeCount: number
   isLiked: boolean
   isLikeDisabled: boolean
+  forwardCount?: number
+  isForwardDisabled?: boolean
   commentCount: number
+  /** 接口三点菜单是否提供删除；旧缓存缺少该字段时按作者是否为当前账号推断。 */
+  canDelete?: boolean
+  /** 三点菜单删除项附带的提交参数 */
+  deleteParams?: Record<string, unknown>
+  /** 接口三点菜单是否提供举报 */
+  canReport?: boolean
+  /** 使用当前动态的 basic 字段定位评论区，转发不能继承原动态的评论区。 */
+  commentTarget?: { oid: string, type: number }
   /** 动态列表接口附带的评论互动摘要（type = 1） */
   hotComment?: {
     text: string
@@ -101,8 +117,11 @@ export interface DisplayMoment {
   forward?: {
     author: string
     authorMid?: string
+    authorFace?: string
+    authorAction?: string
     title: string
     text: string
+    richText?: DisplayRichTextSegment[]
     fallback: string
     /** 被转发原动态 id，用于直接打开原图文 */
     id?: string
@@ -112,6 +131,8 @@ export interface DisplayMoment {
     /** 转发原动态的图片，用于在嵌套卡片中保持原卡片形态 */
     images?: string[]
     imageRatios?: Array<number | undefined>
+    /** 被转发原动态是否使用完整行九宫格布局 */
+    isNineGrid?: boolean
     video?: DisplayForwardVideo
   }
 }

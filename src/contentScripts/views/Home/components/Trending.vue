@@ -2,6 +2,7 @@
 import type { Video } from '~/components/VideoCard/types'
 import VideoCardGrid from '~/components/VideoCardGrid.vue'
 import { useBewlyApp } from '~/composables/useAppProvider'
+import { useHomeTabState } from '~/composables/useHomeTabState'
 import type { GridLayoutType } from '~/logic'
 import type { List as VideoItem, TrendingResult } from '~/models/video/trending'
 import api from '~/utils/api'
@@ -22,26 +23,38 @@ const emit = defineEmits<{
   (e: 'afterLoading'): void
 }>()
 
-const videoList = ref<VideoElement[]>([])
+const tabState = useHomeTabState({ retainedFields: [] })
 const isLoading = ref<boolean>(false)
-const pn = ref<number>(1)
-const noMoreContent = ref<boolean>(false)
+const videoList = tabState.ref<VideoElement[]>('videoList', [])
+const pn = tabState.ref<number>('pn', 1)
+const noMoreContent = tabState.ref<boolean>('noMoreContent', false)
+const hasLoaded = tabState.ref<boolean>('hasLoaded', false)
 const { handleReachBottom, handlePageRefresh } = useBewlyApp()
+// 刷新会作废仍在进行的加载更多，避免旧页拼进新列表后重复请求同一页、产生重复卡片。
+let requestVersion = 0
 
 onMounted(() => {
-  initData()
   initPageAction()
-})
-
-onActivated(() => {
-  initPageAction()
+  if (!tabState.restored)
+    void initData()
+  else if (!hasLoaded.value)
+    void getData()
 })
 
 async function initData() {
+  if (!tabState.isCurrent())
+    return
+
+  const version = ++requestVersion
   noMoreContent.value = false
   videoList.value = []
   pn.value = 1
-  await getData()
+  hasLoaded.value = false
+  await getData(version)
+}
+
+function isRequestCurrent(version: number) {
+  return tabState.isCurrent() && version === requestVersion
 }
 
 // 数据转换函数：将原始数据转换为 VideoCard 所需的显示格式
@@ -67,82 +80,132 @@ function transformTrendingVideo(item: VideoElement): Video | undefined {
     likeStr: (videoItem.stat as any)?.like_str ?? videoItem.stat.like,
     publishedTimestamp: videoItem.pubdate,
     bvid: videoItem.bvid,
+    category: videoItem.tname || undefined,
     tag: decodeHtmlEntities(videoItem.rcmd_reason.content),
     cid: videoItem.cid,
     threePointV2: [],
   }
 }
 
-async function getData() {
+async function getData(version = requestVersion) {
+  if (!isRequestCurrent(version))
+    return
+
   emit('beforeLoading')
   isLoading.value = true
   try {
-    await getTrendingVideos()
+    const loaded = await getTrendingVideos(version)
+    if (isRequestCurrent(version) && loaded)
+      hasLoaded.value = true
   }
   finally {
-    isLoading.value = false
-    emit('afterLoading')
+    if (isRequestCurrent(version)) {
+      isLoading.value = false
+      emit('afterLoading')
+    }
   }
+}
+
+async function reachBottomHandler() {
+  if (!tabState.isCurrent() || isLoading.value || noMoreContent.value)
+    return
+
+  await handleLoadMore()
+}
+
+async function refreshHandler() {
+  await initData()
 }
 
 function initPageAction() {
-  handleReachBottom.value = async () => {
-    if (!isLoading.value && !noMoreContent.value)
-      handleLoadMore()
-  }
-
-  handlePageRefresh.value = async () => {
-    initData()
-  }
+  handleReachBottom.value = reachBottomHandler
+  handlePageRefresh.value = refreshHandler
 }
 
-async function getTrendingVideos() {
+async function getTrendingVideos(version: number): Promise<boolean> {
   if (noMoreContent.value)
-    return
+    return true
+
+  const requestPage = pn.value
 
   try {
     const response: TrendingResult = await api.video.getPopularVideos({
-      pn: pn.value++,
+      pn: requestPage,
       ps: 30,
     })
 
-    if (response.code === 0) {
-      noMoreContent.value = response.data.no_more
+    if (!isRequestCurrent(version) || response.code !== 0)
+      return false
 
-      const newItems = response.data.list.map((item: VideoItem) => ({
-        uniqueId: `${item.aid}`,
+    noMoreContent.value = response.data.no_more
+    pn.value = requestPage + 1
+
+    // 热门榜单在翻页间会变动，同一视频可能出现在相邻两页；卡片 key 必须唯一。
+    const seenIds = new Set(videoList.value.map(video => video.uniqueId))
+    const newItems = response.data.list.flatMap((item: VideoItem) => {
+      const uniqueId = `${item.aid}`
+      if (seenIds.has(uniqueId))
+        return []
+      seenIds.add(uniqueId)
+      return [{
+        uniqueId,
         item,
-        displayData: transformTrendingVideo({ uniqueId: `${item.aid}`, item }),
-      }))
+        displayData: transformTrendingVideo({ uniqueId, item }),
+      }]
+    })
 
-      videoList.value = [...videoList.value, ...newItems]
+    videoList.value = [...videoList.value, ...newItems]
 
-      // 初次加载且数据不足时继续加载
-      if (videoList.value.length < 30 && !noMoreContent.value) {
-        await getTrendingVideos()
-      }
+    // 初次加载且数据不足时继续加载
+    if (videoList.value.length < 30 && !noMoreContent.value) {
+      if (!isRequestCurrent(version))
+        return true
+
+      return await getTrendingVideos(version)
     }
+
+    return true
   }
   catch {
     // 忽略错误
+    return false
   }
 }
 
 // 供 VideoCardGrid 预加载调用的函数
 async function handleLoadMore() {
-  if (isLoading.value || noMoreContent.value)
+  if (!tabState.isCurrent() || isLoading.value || noMoreContent.value)
     return
 
+  const version = requestVersion
   isLoading.value = true
   try {
-    await getTrendingVideos()
+    const loaded = await getTrendingVideos(version)
+    if (isRequestCurrent(version) && loaded)
+      hasLoaded.value = true
   }
   finally {
-    isLoading.value = false
+    if (isRequestCurrent(version))
+      isLoading.value = false
   }
 }
 
+onBeforeUnmount(() => {
+  if (handleReachBottom.value === reachBottomHandler)
+    handleReachBottom.value = undefined
+  if (handlePageRefresh.value === refreshHandler)
+    handlePageRefresh.value = undefined
+})
+
 defineExpose({ initData })
+
+function getItemDisplayData(item: VideoElement) {
+  return item.displayData
+}
+
+function getItemKey(item: VideoElement) {
+  return item.uniqueId
+}
 </script>
 
 <template>
@@ -151,8 +214,8 @@ defineExpose({ initData })
     :grid-layout="gridLayout"
     :loading="isLoading"
     :no-more-content="noMoreContent"
-    :transform-item="(item: VideoElement) => item.displayData"
-    :get-item-key="(item: VideoElement) => item.uniqueId"
+    :transform-item="getItemDisplayData"
+    :get-item-key="getItemKey"
     show-preview
     @refresh="initData"
     @load-more="handleLoadMore"

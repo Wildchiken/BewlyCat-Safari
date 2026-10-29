@@ -4,6 +4,8 @@ import { useI18n } from 'vue-i18n'
 import type { Video } from '~/components/VideoCard/types'
 import VideoCardGrid from '~/components/VideoCardGrid.vue'
 import { useBewlyApp } from '~/composables/useAppProvider'
+import { useHomeTabState } from '~/composables/useHomeTabState'
+import { VideoPageTopBarConfig } from '~/enums/appEnums'
 import type { GridLayoutType } from '~/logic'
 import { settings } from '~/logic'
 import type { List as RankingVideoItem, RankingResult } from '~/models/video/ranking'
@@ -30,7 +32,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const { handleBackToTop, handlePageRefresh } = useBewlyApp()
+const { handleBackToTop, handleReachBottom, handlePageRefresh } = useBewlyApp()
 
 const rankingTypes = computed((): RankingType[] => {
   return [
@@ -60,15 +62,24 @@ const rankingTypes = computed((): RankingType[] => {
   ]
 })
 
+const tabState = useHomeTabState({ retainedFields: ['activatedRankingTypeId'] })
 const isLoading = ref<boolean>(false)
-const activatedRankingType = ref<RankingType>({ ...rankingTypes.value[0] })
-const videoList = reactive<RankingVideoElement[]>([])
-const PgcList = reactive<RankingPgcItem[]>([])
+const activatedRankingTypeId = tabState.ref<number>('activatedRankingTypeId', rankingTypes.value[0].id)
+const activatedRankingType = computed<RankingType>({
+  get: () => rankingTypes.value.find(type => type.id === activatedRankingTypeId.value) || rankingTypes.value[0],
+  set: (type) => {
+    activatedRankingTypeId.value = type.id
+  },
+})
+const videoList = tabState.ref<RankingVideoElement[]>('videoList', [])
+const PgcList = tabState.ref<RankingPgcItem[]>('pgcList', [])
 const shouldMoveAsideUp = ref<boolean>(false)
-const noMoreContent = ref<boolean>(true) // 排行榜没有分页
+const noMoreContent = tabState.ref<boolean>('noMoreContent', true) // 排行榜没有分页
+const hasLoaded = tabState.ref<boolean>('hasLoaded', false)
 const rankingGridRef = ref<HTMLElement | null>(null)
 const rankingGridWidth = ref(0)
 let rankingGridResizeObserver: ResizeObserver | null = null
+let requestVersion = 0
 
 const isRankingAutoSwitchSingleColumn = computed(() => {
   if (props.gridLayout !== 'twoColumns' || !settings.value.autoSwitchListLayout || !rankingGridWidth.value)
@@ -126,6 +137,7 @@ function transformRankingVideo(item: RankingVideoItem, rank: number): Video {
     likeStr: (item.stat as any)?.like_str ?? item.stat.like,
     publishedTimestamp: item.pubdate,
     bvid: item.bvid,
+    category: item.tname || undefined,
     rank,
     cid: item.cid,
     threePointV2: [],
@@ -133,6 +145,9 @@ function transformRankingVideo(item: RankingVideoItem, rank: number): Video {
 }
 
 watch(() => activatedRankingType.value.id, () => {
+  if (!tabState.isCurrent())
+    return
+
   handleBackToTop(settings.value.useSearchPageModeOnHomePage ? 510 : 0)
 
   initData()
@@ -141,10 +156,10 @@ watch(() => activatedRankingType.value.id, () => {
 watch(() => props.topBarVisibility, () => {
   shouldMoveAsideUp.value = false
 
-  // Allow moving tabs up only when the top bar is not hidden & is set to auto-hide
+  // Allow moving tabs up only when the top bar is not hidden & is set to auto-hide (on scroll or on hover)
   // This feature is primarily designed to compatible with the Bilibili Evolved's top bar
   // Even when the BewlyBewly top bar is hidden, the Bilibili Evolved top bar still exists, so not moving up
-  if (settings.value.autoHideTopBar && settings.value.enableTopBar) {
+  if (settings.value.otherPageTopBarConfig !== VideoPageTopBarConfig.AlwaysShow && settings.value.enableTopBar) {
     if (props.topBarVisibility)
       shouldMoveAsideUp.value = false
 
@@ -154,112 +169,170 @@ watch(() => props.topBarVisibility, () => {
 })
 
 onMounted(() => {
-  initData()
   initPageAction()
   window.addEventListener('resize', updateRankingGridWidth, { passive: true })
   nextTick(setupRankingGridResizeObserver)
+
+  if (!tabState.restored)
+    initData()
+  else if (!hasLoaded.value)
+    initData()
 })
 
 watch(rankingGridRef, setupRankingGridResizeObserver, { flush: 'post' })
 
 onBeforeUnmount(() => {
+  requestVersion++
   cleanupRankingGridResizeObserver()
   window.removeEventListener('resize', updateRankingGridWidth)
-})
-
-onActivated(() => {
-  initPageAction()
+  if (handlePageRefresh.value === refreshHandler)
+    handlePageRefresh.value = undefined
 })
 
 function initPageAction() {
-  handlePageRefresh.value = async () => {
-    if (isLoading.value)
-      return
-    initData()
-  }
+  handleReachBottom.value = undefined
+  handlePageRefresh.value = refreshHandler
+}
+
+async function refreshHandler() {
+  if (!tabState.isCurrent() || isLoading.value)
+    return
+
+  initData()
 }
 
 function initData() {
-  videoList.length = 0
-  PgcList.length = 0
-  getData()
-}
+  if (!tabState.isCurrent())
+    return
 
-function getData() {
-  if ('seasonType' in activatedRankingType.value)
-    getRankingPgc()
-  else
-    getRankingVideos()
-}
-
-function getRankingVideos() {
-  videoList.length = 0
+  const version = ++requestVersion
+  const selectionId = activatedRankingType.value.id
+  videoList.value.length = 0
+  PgcList.value.length = 0
+  hasLoaded.value = false
+  isLoading.value = true
   emit('beforeLoading')
-  isLoading.value = true
-  api.ranking.getRankingVideos({
-    rid: activatedRankingType.value.rid,
-    type: 'type' in activatedRankingType.value ? activatedRankingType.value.type : 'all',
-  }).then((response: RankingResult) => {
-    if (response.code === 0) {
-      const { list } = response.data
-      // 添加 displayData 预处理
-      const processedList = list.map((item, index) => ({
-        ...item,
-        displayData: transformRankingVideo(item, index + 1),
-      }))
-      Object.assign(videoList, processedList)
-    }
-  }).finally(() => {
-    isLoading.value = false
-    emit('afterLoading')
-  })
+  getData(version, selectionId)
 }
 
-function getRankingPgc() {
-  PgcList.length = 0
-  isLoading.value = true
-  api.ranking.getRankingPgc({
-    season_type: activatedRankingType.value.seasonType,
-  }).then((response: RankingPgcResult) => {
-    if (response.code === 0)
-      Object.assign(PgcList, response.data.list)
-  }).finally(() => isLoading.value = false)
+function isRequestCurrent(version: number, selectionId: number) {
+  return tabState.isCurrent()
+    && version === requestVersion
+    && activatedRankingType.value.id === selectionId
+}
+
+function getData(version: number, selectionId: number) {
+  if (!isRequestCurrent(version, selectionId))
+    return
+
+  const rankingType = rankingTypes.value.find(type => type.id === selectionId)
+  if (!rankingType)
+    return
+
+  if (rankingType.seasonType !== undefined)
+    void getRankingPgc(version, selectionId, rankingType.seasonType)
+  else
+    void getRankingVideos(version, selectionId, rankingType.rid ?? 0, rankingType.type ?? 'all')
+}
+
+function finishRequest(version: number, selectionId: number) {
+  if (!isRequestCurrent(version, selectionId))
+    return
+
+  isLoading.value = false
+  emit('afterLoading')
+}
+
+async function getRankingVideos(version: number, selectionId: number, rid: number, type: RankingType['type'] = 'all') {
+  try {
+    const response: RankingResult = await api.ranking.getRankingVideos({
+      rid,
+      type,
+    })
+    if (!isRequestCurrent(version, selectionId) || response.code !== 0)
+      return
+
+    const processedList = response.data.list.map((item, index) => ({
+      ...item,
+      displayData: transformRankingVideo(item, index + 1),
+    }))
+    videoList.value = processedList
+    hasLoaded.value = true
+  }
+  catch (error) {
+    if (isRequestCurrent(version, selectionId))
+      console.error('[Ranking] Failed to load video ranking:', error)
+  }
+  finally {
+    finishRequest(version, selectionId)
+  }
+}
+
+async function getRankingPgc(version: number, selectionId: number, seasonType: number) {
+  try {
+    const response: RankingPgcResult = await api.ranking.getRankingPgc({
+      season_type: seasonType,
+    })
+    if (!isRequestCurrent(version, selectionId) || response.code !== 0)
+      return
+
+    PgcList.value = response.data.list
+    hasLoaded.value = true
+  }
+  catch (error) {
+    if (isRequestCurrent(version, selectionId))
+      console.error('[Ranking] Failed to load PGC ranking:', error)
+  }
+  finally {
+    finishRequest(version, selectionId)
+  }
 }
 
 defineExpose({ initData })
+
+function getItemDisplayData(item: RankingVideoElement) {
+  return item.displayData
+}
+
+function getItemKey(item: RankingVideoElement) {
+  return item.aid
+}
 </script>
 
 <template>
   <div flex="~ gap-40px">
     <aside
+      class="ranking-sidebar"
       pos="sticky top-150px" h="[calc(100vh-140px)]" w-200px shrink-0 duration-300
       ease-in-out
       :class="{ hide: shouldMoveAsideUp }"
     >
-      <div h-inherit p-20px m--20px of-y-auto of-x-hidden>
+      <div class="ranking-scroll bew-page-sidebar" of-y-auto of-x-hidden>
         <ul flex="~ col gap-2">
           <li v-for="rankingType in rankingTypes" :key="rankingType.id">
-            <a
-              :class="{ active: activatedRankingType.id === rankingType.id }"
-              px-4 lh-30px h-30px hover:bg="$bew-fill-2" w-inherit
-              block rounded="$bew-radius" cursor-pointer transition="background-color duration-200, color duration-200, box-shadow duration-200, transform duration-200"
-              un-text="$bew-text-1"
+            <button
+              type="button"
+              class="bew-page-nav-item"
+              :data-active="activatedRankingType.id === rankingType.id"
+              :aria-pressed="activatedRankingType.id === rankingType.id"
               @click="activatedRankingType = rankingType"
-            >{{ rankingType.name }}</a>
+            >
+              {{ rankingType.name }}
+            </button>
           </li>
         </ul>
       </div>
     </aside>
 
-    <div w-full>
+    <div w-full min-w-0>
       <template v-if="!('seasonType' in activatedRankingType)">
         <VideoCardGrid
           :items="videoList"
           :grid-layout="gridLayout"
           :loading="isLoading"
           :no-more-content="noMoreContent"
-          :transform-item="(item: RankingVideoElement) => item.displayData"
-          :get-item-key="(item: RankingVideoElement) => item.aid"
+          :transform-item="getItemDisplayData"
+          :get-item-key="getItemKey"
           show-preview
           @refresh="initData"
           @load-more="() => {}"
@@ -311,12 +384,18 @@ defineExpose({ initData })
 </template>
 
 <style lang="scss" scoped>
-.active {
-  --uno: "scale-105 bg-$bew-theme-color-auto text-$bew-text-auto shadow-$bew-shadow-2";
+.ranking-sidebar {
+  align-self: flex-start;
+}
+
+.ranking-scroll {
+  max-height: 100%;
+  padding: var(--bew-space-2);
+  overscroll-behavior-y: contain;
 }
 
 .hide {
-  --uno: "h-[calc(100vh-70)] translate-y--70px";
+  --uno: "h-[calc(100vh-70px)] translate-y--70px";
 }
 
 /* Bangumi Grid 布局 */

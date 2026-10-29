@@ -60,18 +60,22 @@ fi
 echo ""
 echo "🍎 Step 2: Checking for Xcode…"
 
-XCODE_PATH=$(mdfind "kMDItemKind == 'Application'" 2>/dev/null | grep -i "Xcode.app" | head -1)
-if [ -z "$XCODE_PATH" ]; then
-  XCODE_PATH="/Applications/Xcode.app"
+# Prefer the active developer directory (xcode-select), then fall back to Spotlight.
+CONVERTER=$(xcrun --find safari-web-extension-converter 2>/dev/null || true)
+if [ -z "$CONVERTER" ]; then
+  XCODE_PATH=$(mdfind "kMDItemCFBundleIdentifier == 'com.apple.dt.Xcode'" 2>/dev/null | head -1)
+  if [ -n "$XCODE_PATH" ] && [ -f "$XCODE_PATH/Contents/Developer/usr/bin/safari-web-extension-converter" ]; then
+    CONVERTER="$XCODE_PATH/Contents/Developer/usr/bin/safari-web-extension-converter"
+  fi
 fi
 
-if [ ! -d "$XCODE_PATH" ]; then
-  echo "❌ Xcode not found."
+if [ -z "$CONVERTER" ]; then
+  echo "❌ safari-web-extension-converter not found."
   echo ""
   echo "   Safari extensions require Xcode (not just Command Line Tools)."
   echo "   Install Xcode from the Mac App Store, then run:"
   echo ""
-  echo "   xcode-select --switch /Applications/Xcode.app"
+  echo "   sudo xcode-select --switch /Applications/Xcode.app"
   echo ""
   echo "   Then re-run this script."
   echo ""
@@ -80,15 +84,7 @@ if [ ! -d "$XCODE_PATH" ]; then
   exit 1
 fi
 
-# Verify the converter tool is present
-CONVERTER="$XCODE_PATH/Contents/Developer/Tools/safari-web-extension-converter"
-if [ ! -f "$CONVERTER" ]; then
-  echo "❌ safari-web-extension-converter not found inside Xcode."
-  echo "   This tool requires Xcode 15+."
-  exit 1
-fi
-
-echo "✅ Xcode found at: $XCODE_PATH"
+echo "✅ Converter found at: $CONVERTER"
 
 # Step 3: Convert to Safari native app
 echo ""

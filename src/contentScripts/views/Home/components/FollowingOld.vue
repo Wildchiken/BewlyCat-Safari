@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+
 import type { Author, Video } from '~/components/VideoCard/types'
 import VideoCardGrid from '~/components/VideoCardGrid.vue'
 import { useBewlyApp } from '~/composables/useAppProvider'
+import { useHomeTabState } from '~/composables/useHomeTabState'
 import type { GridLayoutType } from '~/logic'
 import { settings } from '~/logic'
 import type { FollowingLiveResult, List as FollowingLiveItem } from '~/models/live/getFollowingLiveList'
@@ -10,6 +13,19 @@ import { BadgeText } from '~/models/moment/moment'
 import api from '~/utils/api'
 import { parseStatNumber } from '~/utils/dataFormatter'
 import { decodeHtmlEntities } from '~/utils/htmlDecode'
+
+const { gridLayout } = defineProps<{
+  gridLayout: GridLayoutType
+}>()
+
+const emit = defineEmits<{
+  (e: 'beforeLoading'): void
+  (e: 'afterLoading'): void
+}>()
+
+const { t } = useI18n()
+const tabState = useHomeTabState({ retainedFields: [] })
+let visibilityTimer: ReturnType<typeof setTimeout> | undefined
 
 // https://github.com/starknt/BewlyBewly/blob/fad999c2e482095dc3840bb291af53d15ff44130/src/contentScripts/views/Home/components/ForYou.vue#L16
 interface VideoElement {
@@ -26,29 +42,21 @@ interface LiveVideoElement {
   displayData?: Video
 }
 
-const { gridLayout } = defineProps<{
-  gridLayout: GridLayoutType
-}>()
-
-const emit = defineEmits<{
-  (e: 'beforeLoading'): void
-  (e: 'afterLoading'): void
-}>()
-
-const videoList = ref<VideoElement[]>([])
+const videoList = tabState.ref<VideoElement[]>('videoList', [])
 /**
  * Get all livestreaming videos of followed users
  */
-const livePage = ref<number>(1)
-const liveVideoList = ref<LiveVideoElement[]>([])
+const livePage = tabState.ref<number>('livePage', 1)
+const liveVideoList = tabState.ref<LiveVideoElement[]>('liveVideoList', [])
 const isLoading = ref<boolean>(false)
-const needToLoginFirst = ref<boolean>(false)
+const needToLoginFirst = tabState.ref<boolean>('needToLoginFirst', false)
 const recursionDepth = ref<number>(0) // 递归深度计数器
 const isPageVisible = ref<boolean>(true) // 页面可见性状态
-const offset = ref<string>('')
-const updateBaseline = ref<string>('')
-const noMoreContent = ref<boolean>(false)
-const isInitialized = ref<boolean>(false)
+const offset = tabState.ref<string>('offset', '')
+const updateBaseline = tabState.ref<string>('updateBaseline', '')
+const noMoreContent = tabState.ref<boolean>('noMoreContent', false)
+const liveNoMoreContent = tabState.ref<boolean>('liveNoMoreContent', false)
+const isInitialized = tabState.ref<boolean>('isInitialized', false)
 const { handlePageRefresh, handleReachBottom, canRefreshHomeSubPage } = useBewlyApp()
 
 // 合并直播和视频列表用于虚拟滚动
@@ -75,14 +83,17 @@ function isLiveStreamingItem(liveItem: FollowingLiveItem): boolean {
 
 // 页面可见性变化处理函数
 async function handleVisibilityChange() {
+  if (!tabState.isCurrent())
+    return
   const wasVisible = isPageVisible.value
   isPageVisible.value = !document.hidden
 
   // 如果从不可见变为可见，且需要加载更多数据，则触发加载
   if (!wasVisible && isPageVisible.value && !noMoreContent.value && !isLoading.value) {
     if (videoList.value.length < 30) {
-      setTimeout(() => {
-        if (isPageVisible.value && !isLoading.value && !noMoreContent.value)
+      clearTimeout(visibilityTimer)
+      visibilityTimer = setTimeout(() => {
+        if (tabState.isCurrent() && isPageVisible.value && !isLoading.value && !noMoreContent.value)
           handleLoadMore()
       }, 200)
     }
@@ -90,41 +101,36 @@ async function handleVisibilityChange() {
 }
 
 onMounted(() => {
+  if (!tabState.isCurrent())
+    return
   canRefreshHomeSubPage.value = true
-  initData()
-
-  // 确保在 nextTick 中调用，以保证所有依赖都已准备好
-  nextTick(() => {
-    initPageAction()
-  })
-
-  // 监听页面可见性变化
-  document.addEventListener('visibilitychange', handleVisibilityChange)
-  // 初始化页面可见性状态
   isPageVisible.value = !document.hidden
-})
-
-onUnmounted(() => {
-  canRefreshHomeSubPage.value = false
-  // 清理页面可见性监听器
-  document.removeEventListener('visibilitychange', handleVisibilityChange)
-})
-
-onActivated(() => {
-  canRefreshHomeSubPage.value = true
   initPageAction()
-  // 组件激活时重新检查页面可见性
-  isPageVisible.value = !document.hidden
+  if (!tabState.restored) {
+    void initData()
+  }
+  else {
+    // Resume an interrupted first load from its last accepted cursor.
+    if (!isInitialized.value && !videoList.value.length)
+      void getData()
+    if (settings.value.followingTabShowLivestreamingVideos && livePage.value === 1)
+      void getLiveVideoList()
+  }
+  document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 
-onDeactivated(() => {
-  canRefreshHomeSubPage.value = false
-  // 组件失活时设置为不可见
+onBeforeUnmount(() => {
   isPageVisible.value = false
+  clearTimeout(visibilityTimer)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+  if (tabState.isActiveTab())
+    canRefreshHomeSubPage.value = false
 })
 
 function initPageAction() {
-  // VideoCardGrid owns infinite scrolling. Clear callbacks left by other kept-alive tabs.
+  if (!tabState.isCurrent())
+    return
+  // VideoCardGrid owns infinite scrolling. Clear callbacks left by the previous tab.
   handleReachBottom.value = undefined
 
   handlePageRefresh.value = async () => {
@@ -136,6 +142,8 @@ function initPageAction() {
 }
 
 async function initData() {
+  if (!tabState.isCurrent())
+    return
   isInitialized.value = false
   needToLoginFirst.value = false
   offset.value = ''
@@ -144,15 +152,19 @@ async function initData() {
   livePage.value = 1
   videoList.value = []
   noMoreContent.value = false
+  liveNoMoreContent.value = false
   recursionDepth.value = 0
 
   if (settings.value.followingTabShowLivestreamingVideos)
     getLiveVideoList()
   await getData()
-  isInitialized.value = true
+  if (tabState.isCurrent())
+    isInitialized.value = true
 }
 
 async function getData() {
+  if (!tabState.isCurrent())
+    return
   emit('beforeLoading')
   isLoading.value = true
 
@@ -160,12 +172,20 @@ async function getData() {
     await getFollowedUsersVideos()
   }
   finally {
-    isLoading.value = false
-    emit('afterLoading')
+    if (tabState.isCurrent()) {
+      isInitialized.value = true
+      isLoading.value = false
+      emit('afterLoading')
+    }
   }
 }
 
 async function getLiveVideoList() {
+  if (!tabState.isCurrent())
+    return
+  if (liveNoMoreContent.value)
+    return
+
   // 检查页面是否可见，如果不可见则不进行请求
   if (!isPageVisible.value)
     return
@@ -177,8 +197,11 @@ async function getLiveVideoList() {
       page_size: 9,
     })
 
+    if (!tabState.isCurrent())
+      return
+
     if (response.code === -101) {
-      noMoreContent.value = true
+      liveNoMoreContent.value = true
       needToLoginFirst.value = true
       return
     }
@@ -186,7 +209,7 @@ async function getLiveVideoList() {
     if (response.code === 0) {
       // 如果返回的数据少于9条，说明没有更多数据了
       if (response.data.list.length < 9)
-        noMoreContent.value = true
+        liveNoMoreContent.value = true
 
       livePage.value++
 
@@ -226,6 +249,8 @@ async function getLiveVideoList() {
 }
 
 async function getFollowedUsersVideos() {
+  if (!tabState.isCurrent())
+    return
   if (noMoreContent.value)
     return
 
@@ -254,6 +279,9 @@ async function getFollowedUsersVideos() {
       offset: offset.value || undefined,
       update_baseline: updateBaseline.value,
     })
+
+    if (!tabState.isCurrent())
+      return
 
     if (response.code === -101) {
       noMoreContent.value = true
@@ -364,6 +392,8 @@ function shouldFilterVideo(item: MomentItem): boolean {
 
 // 供 VideoCardGrid 预加载调用的函数
 async function handleLoadMore() {
+  if (!tabState.isCurrent())
+    return
   if (isLoading.value || noMoreContent.value)
     return
 
@@ -372,7 +402,8 @@ async function handleLoadMore() {
     await getFollowedUsersVideos()
   }
   finally {
-    isLoading.value = false
+    if (tabState.isCurrent())
+      isLoading.value = false
   }
 }
 
@@ -457,7 +488,7 @@ function mapMomentItemToVideo(item?: MomentItem, authors?: Author[]): Video | un
     publishedTimestamp: item.modules?.module_author?.pub_ts,
     bvid: archive.bvid,
     badge,
-    tag: isCollaboration ? '联合投稿' : undefined,
+    tag: isCollaboration ? t('home.collaboration') : undefined,
     threePointV2: [],
   }
 }
@@ -479,6 +510,10 @@ function transformCombinedItem(item: VideoElement | LiveVideoElement): Video | u
 }
 
 defineExpose({ initData })
+
+function getItemKey(item: VideoElement | LiveVideoElement) {
+  return item.uniqueId
+}
 </script>
 
 <template>
@@ -490,7 +525,7 @@ defineExpose({ initData })
       :no-more-content="noMoreContent"
       :need-to-login-first="needToLoginFirst"
       :transform-item="transformCombinedItem"
-      :get-item-key="(item: VideoElement | LiveVideoElement) => item.uniqueId"
+      :get-item-key="getItemKey"
       :show-watcher-later="false"
       is-following-page
       show-preview

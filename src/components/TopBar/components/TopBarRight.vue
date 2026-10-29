@@ -12,6 +12,7 @@ import { isComponentVisible, shouldShowBadge, shouldShowDotBadge, shouldShowNumb
 
 import { useTopBarInteraction } from '../composables/useTopBarInteraction'
 import { MESSAGE_URL } from '../constants/urls'
+import AddOpenTabsDialog from './AddOpenTabsDialog.vue'
 import FavoritesPop from './pops/FavoritesPop.vue'
 import HistoryPop from './pops/HistoryPop.vue'
 import MomentsPop from './pops/MomentsPop.vue'
@@ -21,10 +22,18 @@ import UploadPop from './pops/UploadPop.vue'
 import UserPanelPop from './pops/UserPanelPop.vue'
 import WatchLaterPop from './pops/WatchLaterPop.vue'
 import TopBarItemEditor from './TopBarItemEditor.vue'
+import TopBarModeSwitcher from './TopBarModeSwitcher.vue'
 
 const emit = defineEmits(['notificationsClick'])
 
 const topBarStore = useTopBarStore()
+const showAddOpenTabsDialog = ref(false)
+
+function openAddOpenTabsDialog() {
+  showAddOpenTabsDialog.value = true
+  topBarStore.closeAllPopups()
+}
+
 // 使用 store 中的必要状态
 const {
   isLogin,
@@ -39,7 +48,7 @@ const {
   hasBCoinToReceive,
 } = storeToRefs(topBarStore)
 
-const { invalidateUnreadMessageState, syncMomentsState, syncSharedData, syncUnreadMessageState } = topBarStore
+const { syncMomentsState, syncSharedData, syncUnreadMessageState } = topBarStore
 
 function refreshUnreadMessageSharedState() {
   syncUnreadMessageState().catch((error) => {
@@ -69,14 +78,15 @@ interface EditableTopBarComponent {
 
 const editableTopBarComponents: EditableTopBarComponent[] = [
   { key: 'moments', supportsBadge: true },
-  { key: 'favorites', supportsBadge: true },
-  { key: 'history', supportsBadge: true },
+  { key: 'favorites', supportsBadge: false },
+  { key: 'history', supportsBadge: false },
   { key: 'watchLater', supportsBadge: true },
   { key: 'creatorCenter', supportsBadge: false },
   { key: 'upload', supportsBadge: false },
   { key: 'notifications', supportsBadge: true },
   { key: 'pinnedChannels', supportsBadge: false },
   { key: 'avatar', supportsBadge: false },
+  { key: 'topBarSwitcher', supportsBadge: false },
 ]
 
 function ensureTopBarComponentsConfig() {
@@ -184,8 +194,7 @@ watch(
     if (newVal === oldVal)
       return
 
-    if (!newVal)
-      refreshUnreadMessageSharedState()
+    refreshUnreadMessageSharedState()
   },
   { immediate: true },
 )
@@ -196,8 +205,7 @@ watch(
     if (newVal === oldVal)
       return
 
-    if (!newVal)
-      refreshUnreadMessageSharedState()
+    refreshUnreadMessageSharedState()
   },
 )
 
@@ -233,7 +241,7 @@ watch(
     // 弹窗关闭时更新
     if (isLogin.value) {
       if (!newVal) {
-        await syncMomentsState('video')
+        await syncMomentsState()
       }
       else {
         nextTick(() => {
@@ -245,30 +253,8 @@ watch(
   },
 )
 
-watch(
-  () => popupVisible.value?.favorites ?? false,
-  (newVal, oldVal) => {
-    if (newVal === undefined || oldVal === undefined)
-      return
-
-    if (newVal === oldVal)
-      return
-
-    if (newVal) {
-      nextTick(() => {
-        if (favoritesPopRef.value)
-          favoritesPopRef.value.refreshFavoriteData?.()
-      })
-    }
-  },
-  { immediate: true },
-)
-
 // 修改通知点击处理
 function handleNotificationsClick(item: { name: string, url: string, unreadCount: number, icon: string }) {
-  invalidateUnreadMessageState().catch((error) => {
-    console.error('标记未读消息缓存失效失败:', error)
-  })
   emit('notificationsClick', item)
 }
 
@@ -297,7 +283,7 @@ const shouldShowDivider = computed(() => {
   >
     <div
       class="others"
-      flex="~ items-center gap-1" px-5px
+      flex="~ items-center gap-1" px-1
       text="$bew-text-1"
       :style="{ height: 'var(--bew-control-height)' }"
     >
@@ -479,6 +465,7 @@ const shouldShowDivider = computed(() => {
                   v-if="!isLayoutEditing && popupVisible?.watchLater"
                   ref="watchLaterPopRef"
                   class="bew-popover"
+                  @add-open-tabs="openAddOpenTabsDialog"
                   @click.stop="() => {}"
                 />
               </Transition>
@@ -686,7 +673,7 @@ const shouldShowDivider = computed(() => {
                 background: `url(${browser.runtime.getURL('/assets/big-vip.svg')}) center / contain no-repeat`,
               }"
               w="28%" h="28%" z-1
-              pos="absolute bottom-18px right-11px" duration-300
+              pos="absolute bottom-16px right-12px" duration-300
             />
 
             <Transition name="slide-in">
@@ -706,12 +693,26 @@ const shouldShowDivider = computed(() => {
           </div>
         </TopBarItemEditor>
       </div>
+
+      <!-- Bewly / Bilibili top bar switcher: keep it as the final action. -->
+      <TopBarModeSwitcher
+        v-if="isLayoutEditing || isComponentVisible('topBarSwitcher')"
+        :force-white-icon="forceWhiteIcon"
+      />
     </div>
+    <AddOpenTabsDialog
+      v-if="showAddOpenTabsDialog"
+      @close="showAddOpenTabsDialog = false"
+    />
   </div>
 </template>
 
 <style lang="scss" scoped>
 @use "../styles/index.scss";
+
+.others {
+  position: relative;
+}
 
 .top-bar-editing-group {
   display: flex !important;

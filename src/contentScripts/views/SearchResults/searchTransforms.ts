@@ -1,43 +1,13 @@
 import type { Video } from '~/components/VideoCard/types'
 import { parseStatNumber } from '~/utils/dataFormatter'
-
-/**
- * 解码 HTML 实体
- * 使用轻量级正则替代 DOMParser，性能更好
- */
-function decodeHtmlEntities(text: string | undefined): string {
-  if (!text || typeof text !== 'string')
-    return text || ''
-
-  // 常用实体映射
-  const entities: Record<string, string> = {
-    '&amp;': '&',
-    '&lt;': '<',
-    '&gt;': '>',
-    '&quot;': '"',
-    '&#39;': '\'',
-    '&#x27;': '\'',
-    '&apos;': '\'',
-    '&nbsp;': ' ',
-  }
-
-  return text.replace(/&(?:#x?[0-9a-f]+|[a-z]+);/gi, (match) => {
-    // 数字实体 &#123; 或 &#xAB;
-    if (match.startsWith('&#')) {
-      const isHex = match[2] === 'x' || match[2] === 'X'
-      const code = Number.parseInt(match.slice(isHex ? 3 : 2, -1), isHex ? 16 : 10)
-      return Number.isNaN(code) ? match : String.fromCharCode(code)
-    }
-    // 命名实体
-    return entities[match.toLowerCase()] || match
-  })
-}
+import { decodeHtmlEntities } from '~/utils/htmlDecode'
+import { i18n } from '~/utils/i18n'
 
 export function formatNumber(num?: number): string {
   if (!num)
     return '0'
   if (num >= 10000)
-    return `${(num / 10000).toFixed(1)}万`
+    return new Intl.NumberFormat(i18n.global.locale.value, { notation: 'compact', maximumFractionDigits: 1 }).format(num)
   return num.toString()
 }
 
@@ -60,8 +30,10 @@ export function isAdVideo(video: any): boolean {
 }
 
 function splitTagValue(value: string): string[] {
-  return value.split(/[\s,，、/|#；;]+/g).filter(Boolean)
+  return value.split(/[,，、/|#；;]+/g).filter(Boolean)
 }
+
+const MAX_SEARCH_RESULT_TAG_COUNT = 4
 
 function formatDuration(totalSeconds: number): string {
   const seconds = Math.max(0, Math.round(totalSeconds))
@@ -91,17 +63,19 @@ export function convertVideoData(video: any): Video {
       ? video.durationStr
       : durationSeconds ? formatDuration(durationSeconds) : undefined
 
-  // 处理课堂类型：将 episode_count_text 作为 tag
-  let tags: string[]
+  // 课堂的集数是展示标签；普通搜索结果返回的是真实内容标签，可点击搜索。
+  let displayTags: string[] = []
+  let searchableTags: string[] = []
   if (video.type === 'ketang' && video.episode_count_text) {
-    tags = [video.episode_count_text]
+    displayTags = [video.episode_count_text]
   }
   else {
-    tags = extractVideoTags(video)
+    searchableTags = extractVideoTags(video)
   }
 
-  // 处理课堂类型的 capsuleText（课堂不需要 capsuleText）
-  const capsuleText = video.type === 'ketang' ? undefined : removeHighlight(video.typename || '').trim()
+  const category = video.type === 'ketang'
+    ? undefined
+    : removeHighlight(video.typename || '').trim() || undefined
 
   // 处理 author 字段：确保始终返回正确的对象格式
   let author: any
@@ -145,6 +119,10 @@ export function convertVideoData(video: any): Video {
     }
   }
 
+  // 已规范化的数据可能已经带有关注状态，保留它以避免网格重复查询。
+  if (typeof video.author?.followed === 'boolean')
+    author.followed = video.author.followed
+
   // 课堂类型需要特殊处理 URL
   const url = video.type === 'ketang' && video.arcurl
     ? video.arcurl
@@ -164,8 +142,9 @@ export function convertVideoData(video: any): Video {
     aid: video.aid,
     cid: video.cid,
     threePointV2: [],
-    tag: tags.length ? tags : undefined,
-    capsuleText: capsuleText || undefined,
+    tag: displayTags.length ? displayTags : undefined,
+    searchableTags: searchableTags.length ? searchableTags : undefined,
+    category,
     type: video.type === 'ketang' ? 'ketang' : undefined,
     url,
   }
@@ -243,7 +222,7 @@ export function convertBangumiHighlight(item: any) {
     publishDateFormatted,
     episodeCount,
     tags: bizTips.filter(Boolean).slice(0, 4),
-    buttonText: removeHighlight(item.button_text || '立即观看'),
+    buttonText: removeHighlight(item.button_text || i18n.global.t('search.watch_now')),
     desc: sanitizeBangumiDescription(description || base.desc || ''),
     episodes,
   }
@@ -278,7 +257,7 @@ export function convertUserCardData(user: any) {
     samples: convertUserSamples(user, 7),
     isFollowed: user.is_follow || 0,
     showFollowButton: true,
-    liveStatus: user.live_status,
+    liveStatus: Number(user.is_live ?? user.live_status ?? 0),
     roomid: user.roomid || user.room_id,
   }
 }
@@ -467,7 +446,7 @@ export function convertLiveRoomData(live: any): Video {
     },
     view: parseStatNumber(live.online),
     viewStr: String(live.online || ''),
-    tag,
+    searchableTags: tag ? [tag] : undefined,
     roomid: live.roomid,
     liveStatus: live.live_status,
     threePointV2: [],
@@ -596,7 +575,7 @@ function convertUserSamples(source: any, limit = 6): any[] {
     if (!item)
       continue
     const id = String(item.bvid || item.aid || item.id || item.arcurl || index)
-    const title = removeHighlight(item.title || item.long_title || `稿件 ${index + 1}`)
+    const title = removeHighlight(item.title || item.long_title || i18n.global.t('search.work', { index: index + 1 }))
     const cover = normalizeMediaCover(item.pic || item.cover)
     const url = resolveUserSampleUrl(item)
     const play = parseCountNumber(item.play)
@@ -678,40 +657,39 @@ function extractVideoTags(video: any): string[] {
   const pushValue = (value: any) => {
     if (typeof value === 'string')
       rawValues.push(value)
+    else if (typeof value?.tag_name === 'string')
+      rawValues.push(value.tag_name)
+    else if (typeof value?.name === 'string')
+      rawValues.push(value.name)
   }
 
-  if (Array.isArray(video.tag))
-    rawValues.push(...video.tag)
-  else
+  if (Array.isArray(video.tag)) {
+    for (const tag of video.tag)
+      pushValue(tag)
+  }
+  else {
     pushValue(video.tag)
+  }
 
   if (Array.isArray(video.tags)) {
-    for (const tag of video.tags) {
-      if (typeof tag === 'string')
-        rawValues.push(tag)
-      else if (typeof tag?.tag_name === 'string')
-        rawValues.push(tag.tag_name)
-      else if (typeof tag?.name === 'string')
-        rawValues.push(tag.name)
-    }
+    for (const tag of video.tags)
+      pushValue(tag)
   }
 
   const candidates = rawValues
     .flatMap(value => splitTagValue(value))
-    .map(item => removeHighlight(item).replace(/\s+/g, ''))
+    .map(item => removeHighlight(item).trim().replace(/\s+/g, ' '))
     .filter(Boolean)
 
   const result: string[] = []
   const seen = new Set<string>()
 
   for (const tag of candidates) {
-    if (Array.from(tag).length >= 4)
-      continue
     if (seen.has(tag))
       continue
     seen.add(tag)
     result.push(tag)
-    if (result.length >= 3)
+    if (result.length >= MAX_SEARCH_RESULT_TAG_COUNT)
       break
   }
 

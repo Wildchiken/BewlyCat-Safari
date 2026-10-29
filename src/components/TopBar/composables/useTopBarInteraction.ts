@@ -6,6 +6,7 @@ import {
   CHANNEL_PAGE_URL,
   SEARCH_PAGE_URL,
   SPACE_URL,
+  TOPIC_DETAIL_URL,
   VIDEO_PAGE_URL,
 } from '~/components/TopBar/constants/urls'
 import { useBewlyApp } from '~/composables/useAppProvider'
@@ -13,8 +14,9 @@ import { useDark } from '~/composables/useDark'
 import { useDelayedHover } from '~/composables/useDelayedHover'
 import { AppPage } from '~/enums/appEnums'
 import { settings } from '~/logic'
+import { experimentalTopBarStyles } from '~/logic/storage'
 import { useTopBarStore } from '~/stores/topBarStore'
-import { isHomePage } from '~/utils/main'
+import { isActualHomepage, isHomePage } from '~/utils/main'
 import { shouldUsePluginSearchResultsPage } from '~/utils/searchNavigation'
 import { openLinkInBackground } from '~/utils/tabs'
 import { createTransformer } from '~/utils/transformer'
@@ -27,6 +29,12 @@ const bewlyPageByTopBarItem: Partial<Record<string, AppPage>> = {
   watchLater: AppPage.WatchLater,
 }
 
+type TopBarPopupKey = keyof ReturnType<typeof useTopBarStore>['popupVisible']
+
+function isTopBarPopupKey(key: string, popupVisible: ReturnType<typeof useTopBarStore>['popupVisible']): key is TopBarPopupKey {
+  return key in popupVisible
+}
+
 function getConfiguredPageUrl(page: AppPage): string {
   return `https://www.bilibili.com/?page=${page}`
 }
@@ -34,8 +42,8 @@ function getConfiguredPageUrl(page: AppPage): string {
 export function useTopBarInteraction() {
   const topBarStore = useTopBarStore()
   const { closeAllPopups } = topBarStore
-  const topBarItemElements: Record<string, Ref<HTMLElement | undefined>> = {}
-  const topBarTransformers = reactive({})
+  const topBarItemElements: Partial<Record<TopBarPopupKey, Ref<HTMLElement | undefined> & { reset?: () => void }>> = {}
+  const topBarTransformers = reactive<Partial<Record<TopBarPopupKey, Ref<any>>>>({})
 
   const isMouseOverPopup = reactive<Record<string, boolean>>({})
 
@@ -57,18 +65,16 @@ export function useTopBarInteraction() {
   useEventListener(window, 'pushstate', updateCurrentLocationHref)
   useEventListener(window, 'popstate', updateCurrentLocationHref)
 
-  // 页面自己在顶栏底下铺了大图（原生首页、频道页、空间页、账号页），或用户选了阴影样式。
-  // 这类底图的亮暗不受主题控制，只能恒用深色阴影压住，白图标才读得出来，不跟随亮/暗模式。
-  const hasPageBackdrop = computed((): boolean => {
+  // 原生搜索页与话题详情页的顶部都不用黑色阴影托底；
+  // 自动档在这两类页面固定选择白雾分支。
+  const preferWhiteFogInAuto = computed(() =>
+    SEARCH_PAGE_URL.test(currentLocationHref.value)
+    || TOPIC_DETAIL_URL.test(currentLocationHref.value))
+
+  // 页面自己在顶栏底下铺了大图（原生首页、频道页、空间页、账号页）。
+  // 这类底图的亮暗不受主题控制，只能恒用深色阴影压住，白图标才读得出来。
+  const hasPageBanner = computed((): boolean => {
     if (!settings.value)
-      return false
-
-    // 阴影：始终白图标，压住页面背景。
-    if (settings.value.topBarStyle === 'transparent')
-      return true
-
-    // 白雾全页同一套外观，不按页面切阴影。
-    if (settings.value.topBarStyle !== 'default')
       return false
 
     return (isHomePage() && settings.value.useOriginalBilibiliHomepage)
@@ -77,10 +83,9 @@ export function useTopBarInteraction() {
       || ACCOUNT_URL.test(location.href)
   })
 
-  // Bewly 自己的壁纸铺在顶栏底下。壁纸由用户连同主题一起挑选，亮暗可预期，
-  // 因此雾色跟随亮/暗模式走，而不是一律压黑。
-  const hasWallpaperBackdrop = computed((): boolean => {
-    if (!settings.value || settings.value.topBarStyle !== 'default')
+  // Bewly 自己的壁纸铺在顶栏底下。
+  const hasWallpaper = computed((): boolean => {
+    if (!settings.value)
       return false
 
     if (!isHomePage() || !activatedPage?.value)
@@ -103,14 +108,53 @@ export function useTopBarInteraction() {
       && !!settings.value.searchPageWallpaper
   })
 
-  // 遮罩是深色时图标才需要强制转白：页面底图恒用阴影，壁纸则只在暗色模式下才是黑雾。
-  const forceWhiteIcon = computed((): boolean =>
-    hasPageBackdrop.value || (hasWallpaperBackdrop.value && isDark.value))
+  // 实验三档使用余弦渐变管线与其配套色调判定。
+  const isExperimentalStyle = computed((): boolean => {
+    const style = settings.value?.topBarStyle
+    return !!style && experimentalTopBarStyles.includes(style)
+  })
+
+  // 实验档色调：页面底图恒压黑；白雾全页同一套外观不切换；
+  // 自动与壁纸档按页面横幅切换，壁纸跟随亮/暗模式决定雾色。
+  const hasPageBackdrop = computed((): boolean => {
+    if (!settings.value || !isExperimentalStyle.value)
+      return false
+
+    // 阴影：始终压住页面背景。
+    if (settings.value.topBarStyle === 'expTransparent')
+      return true
+
+    // 白雾不按页面切阴影。
+    if (settings.value.topBarStyle === 'expFrostedGlass')
+      return false
+
+    return preferWhiteFogInAuto.value ? false : hasPageBanner.value
+  })
+
+  const hasWallpaperBackdrop = computed((): boolean =>
+    !!settings.value
+    && isExperimentalStyle.value
+    && settings.value.topBarStyle === 'expDefault'
+    && hasWallpaper.value)
+
+  // 遮罩是深色时图标才需要强制转白。
+  const forceWhiteIcon = computed((): boolean => {
+    const style = settings.value?.topBarStyle
+
+    // 旧版三档保持 v1.5.x 的判定：阴影恒白图标；白雾全页一套外观；
+    // 自动按横幅或壁纸存在与否压黑，不区分亮暗。
+    if (style === 'transparent')
+      return true
+    if (style === 'frostedGlass')
+      return false
+    if (style === 'default')
+      return !preferWhiteFogInAuto.value && (hasPageBanner.value || hasWallpaper.value)
+
+    // 实验三档：底图恒用阴影，壁纸只在暗色模式下才是黑雾。
+    return hasPageBackdrop.value || (hasWallpaperBackdrop.value && isDark.value)
+  })
 
   const showSearchBar = computed((): boolean => {
-    const currentUrl = currentLocationHref.value
-    const isSearchPage = SEARCH_PAGE_URL.test(currentUrl)
-
     if (isHomePage()) {
       if (settings.value.useOriginalBilibiliHomepage)
         return true
@@ -130,16 +174,11 @@ export function useTopBarInteraction() {
       if (settings.value.useSearchPageModeOnHomePage && activatedPage.value === AppPage.Home && reachTop?.value)
         return false
     }
-    else if (isSearchPage) {
-      // 原生搜索页面本身已有搜索框，隐藏顶栏搜索框避免重复
-      return false
-    }
-
     return true
   })
 
   // 设置顶栏项悬停事件
-  function setupTopBarItemHoverEvent(key: string) {
+  function setupTopBarItemHoverEvent(key: TopBarPopupKey) {
     const element = useDelayedHover({
       enterDelay: 320,
       leaveDelay: 320,
@@ -162,7 +201,7 @@ export function useTopBarInteraction() {
   }
 
   // 设置顶栏项变换器
-  function setupTopBarItemTransformer(key: string, targetRef?: any) {
+  function setupTopBarItemTransformer(key: TopBarPopupKey, targetRef?: Ref<any>) {
     const trigger = topBarItemElements[key]
     if (!trigger)
       return
@@ -205,7 +244,11 @@ export function useTopBarInteraction() {
       return
     }
 
-    if (openMode === 'newTab' || (openMode === 'currentTabIfNotHomepage' && isHomePage())) {
+    if (
+      openMode === 'newTab'
+      || (openMode === 'currentTabIfNotHomepage' && isHomePage())
+      || (openMode === 'currentTabIfHomepage' && !isActualHomepage())
+    ) {
       window.open(pageUrl, '_blank')
       return
     }
@@ -231,6 +274,9 @@ export function useTopBarInteraction() {
     if (handledClickEvents.has(event))
       return
 
+    if (!isTopBarPopupKey(key, topBarStore.popupVisible))
+      return
+
     if (settings.value.touchScreenOptimization) {
       handledClickEvents.add(event)
       event.preventDefault()
@@ -251,6 +297,9 @@ export function useTopBarInteraction() {
     handledClickEvents.add(event)
     event.preventDefault()
     event.stopPropagation()
+    // 点击将打开新标签页：先复位该 hover 实例（清 pending enter timer 并关闭
+    // 已打开弹窗），避免新标签聚焦、原标签失焦后定时器在后台触发把弹窗重新打开。
+    topBarItemElements[key]?.reset?.()
     closeAllPopups()
     openConfiguredPageFromTopBar(page)
   }

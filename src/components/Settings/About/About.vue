@@ -4,22 +4,55 @@ import { useToast } from 'vue-toastification'
 import browser from 'webextension-polyfill'
 
 import Button from '~/components/Button.vue'
+import Dialog from '~/components/Dialog.vue'
 import Radio from '~/components/Radio.vue'
 import { useSettingsCloudSyncPreference } from '~/composables/useSettingsCloudSyncPreference'
 import { settings } from '~/logic'
-import { getBrowserInfo, parseBrowserInfo } from '~/utils/browserInfo'
+import type { BrowserInfo } from '~/utils/browserInfo'
+import { GET_BROWSER_INFO_MESSAGE, getBrowserInfo } from '~/utils/browserInfo'
+import { sendMessage } from '~/utils/messaging'
+import type { SettingsCloudSyncEnableResponse, SettingsCloudSyncStatus } from '~/utils/settingsCloudSyncProtocol'
+import {
+  SETTINGS_CLOUD_SYNC_ENABLE_MESSAGE,
+  SETTINGS_CLOUD_SYNC_STATUS_MESSAGE,
+} from '~/utils/settingsCloudSyncProtocol'
 
+import licenseText from '../../../../LICENSE?raw'
 import { version } from '../../../../package.json'
 import Maintenance from '../Advanced/Maintenance.vue'
 import SettingsItem from '../components/SettingsItem.vue'
 import SettingsItemGroup from '../components/SettingsItemGroup.vue'
 import SettingsSectionHeading from '../components/SettingsSectionHeading.vue'
 
+interface ThirdPartyLicense {
+  name: string
+  version: string
+  license: string
+  homepage?: string
+  licenseText?: string
+}
+
+// 由 scripts/thirdPartyLicenses.ts 在各构建产物中分别生成。
+const THIRD_PARTY_LICENSE_BUILDS = ['content', 'inject', 'background']
+
 const hasNewVersion = ref<boolean>(false)
 const contributorsImageFailed = ref(false)
+const contributorsImageUsingCloud = ref(false)
+const contributorsImageSrc = ref(browser.runtime.getURL('/assets/contributors.svg'))
 const settingsCloudSyncPreference = useSettingsCloudSyncPreference()
-const browserInfo = ref(parseBrowserInfo())
+const browserInfo = ref<BrowserInfo>({ name: null, version: null })
 const isCopyingEnvironmentInfo = ref(false)
+const showSyncConflictDialog = ref(false)
+const isSyncToggling = ref(false)
+// The switch stays visually checked while the direction dialog is open because
+// the underlying preference has not been written yet. Bumping this key
+// remounts the switch so it snaps back off when enabling is cancelled.
+const syncSwitchRenderTick = ref(0)
+const pendingEnableChoice = ref(false)
+const showLicenseDialog = ref(false)
+const showThirdPartyLicenseDialog = ref(false)
+const thirdPartyLicenses = ref<ThirdPartyLicense[] | null>(null)
+const thirdPartyLicensesFailed = ref(false)
 const { t } = useI18n()
 const toast = useToast()
 
@@ -27,8 +60,105 @@ const isDev = computed((): boolean => import.meta.env.DEV)
 
 onMounted(async () => {
   checkGitHubRelease()
-  browserInfo.value = await getBrowserInfo()
+  // 页面上下文的 UA 可能被防移动端跳转改写，由 background 读取真实浏览器信息
+  browserInfo.value = await sendMessage<undefined, BrowserInfo>(GET_BROWSER_INFO_MESSAGE)
+    .catch(() => getBrowserInfo())
 })
+
+function revertSyncSwitch() {
+  syncSwitchRenderTick.value++
+}
+
+function handleSyncToggle(value: boolean) {
+  if (!value) {
+    settingsCloudSyncPreference.value = false
+    return
+  }
+  void requestEnableSettingsCloudSync()
+}
+
+async function sendEnableSettingsCloudSyncRequest(mode: 'auto' | 'pull' | 'push') {
+  // The background runs the first coordination inline and reports the outcome;
+  // the switch state mirrors back through storage.onChanged only on success.
+  const response = await sendMessage<{ mode: 'auto' | 'pull' | 'push' }, SettingsCloudSyncEnableResponse>(
+    SETTINGS_CLOUD_SYNC_ENABLE_MESSAGE,
+    { mode },
+  )
+  if (!response)
+    throw new Error('Missing settings cloud sync bootstrap response')
+  if (!response.ok && response.reason === 'initialization-failed')
+    throw new Error('Settings cloud sync bootstrap failed')
+  return response.ok
+}
+
+async function requestEnableSettingsCloudSync() {
+  if (isSyncToggling.value)
+    return
+
+  isSyncToggling.value = true
+  let failedPhase: 'status' | 'enable' = 'status'
+  try {
+    const status = await sendMessage<undefined, SettingsCloudSyncStatus>(SETTINGS_CLOUD_SYNC_STATUS_MESSAGE)
+    if (!status)
+      throw new Error('Missing cloud sync status response')
+
+    if (status.state === 'compatible') {
+      // Cloud already holds a snapshot: let the user pick which side takes
+      // precedence instead of silently overwriting one of them.
+      showSyncConflictDialog.value = true
+      return
+    }
+
+    if (status.state === 'incompatible') {
+      // The snapshot was written by a newer extension version; enabling here
+      // would corrupt it.
+      revertSyncSwitch()
+      toast.error(t('settings.sync_cloud_incompatible'))
+      return
+    }
+
+    failedPhase = 'enable'
+    if (!await sendEnableSettingsCloudSyncRequest('auto')) {
+      revertSyncSwitch()
+      toast.error(t('settings.sync_cloud_incompatible'))
+    }
+  }
+  catch (error) {
+    console.error(error)
+    revertSyncSwitch()
+    toast.error(t(failedPhase === 'status'
+      ? 'settings.sync_cloud_status_failed'
+      : 'settings.sync_cloud_enable_failed'))
+  }
+  finally {
+    isSyncToggling.value = false
+  }
+}
+
+async function enableSyncWithMode(mode: 'pull' | 'push') {
+  pendingEnableChoice.value = true
+  showSyncConflictDialog.value = false
+  try {
+    if (!await sendEnableSettingsCloudSyncRequest(mode)) {
+      revertSyncSwitch()
+      toast.error(t('settings.sync_cloud_incompatible'))
+    }
+  }
+  catch (error) {
+    console.error(error)
+    revertSyncSwitch()
+    toast.error(t('settings.sync_cloud_enable_failed'))
+  }
+  finally {
+    pendingEnableChoice.value = false
+  }
+}
+
+function handleSyncDialogClose() {
+  showSyncConflictDialog.value = false
+  if (!pendingEnableChoice.value && settingsCloudSyncPreference.value !== true)
+    revertSyncSwitch()
+}
 
 async function checkGitHubRelease() {
   const apiUrl = `https://api.github.com/repos/keleus/BewlyCat/releases/latest`
@@ -52,7 +182,39 @@ async function checkGitHubRelease() {
 }
 
 function handleContributorImageError() {
+  if (!contributorsImageUsingCloud.value) {
+    contributorsImageUsingCloud.value = true
+    contributorsImageSrc.value = 'https://contrib.rocks/image?repo=keleus/BewlyCat'
+    return
+  }
+
   contributorsImageFailed.value = true
+}
+
+async function loadThirdPartyLicenses() {
+  const results = await Promise.allSettled(THIRD_PARTY_LICENSE_BUILDS.map(async (build) => {
+    const response = await fetch(browser.runtime.getURL(`/assets/third-party-licenses.${build}.json`))
+    if (!response.ok)
+      throw new Error(`Failed to load third-party licenses: ${build}`)
+    return (await response.json()).packages as ThirdPartyLicense[]
+  }))
+
+  const licenses = new Map<string, ThirdPartyLicense>()
+  for (const result of results) {
+    if (result.status !== 'fulfilled')
+      continue
+    for (const item of result.value)
+      licenses.set(`${item.name}@${item.version}`, item)
+  }
+
+  thirdPartyLicensesFailed.value = licenses.size === 0
+  thirdPartyLicenses.value = [...licenses.values()].sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function openThirdPartyLicenseDialog() {
+  showThirdPartyLicenseDialog.value = true
+  if (!thirdPartyLicenses.value)
+    void loadThirdPartyLicenses()
 }
 
 async function handleCopyEnvironmentInfo() {
@@ -61,9 +223,9 @@ async function handleCopyEnvironmentInfo() {
 
   const unknownValue = t('settings.environment_info_unknown')
   const text = [
-    `- 浏览器：${browserInfo.value.name ?? unknownValue}`,
-    `- 浏览器版本：${browserInfo.value.version ?? unknownValue}`,
-    `- BewlyCat 版本：${version}`,
+    `- ${t('settings.environment_browser')}: ${browserInfo.value.name ?? unknownValue}`,
+    `- ${t('settings.environment_browser_version')}: ${browserInfo.value.version ?? unknownValue}`,
+    `- ${t('settings.environment_bewlycat_version')}: ${version}`,
   ].join('\n')
 
   isCopyingEnvironmentInfo.value = true
@@ -145,7 +307,12 @@ async function handleCopyEnvironmentInfo() {
             :desc="$t('settings.enable_settings_sync_desc')"
             right-width="auto"
           >
-            <Radio v-model="settingsCloudSyncPreference" />
+            <Radio
+              :key="syncSwitchRenderTick"
+              :model-value="settingsCloudSyncPreference === true"
+              :disabled="isSyncToggling"
+              @update:model-value="handleSyncToggle"
+            />
           </SettingsItem>
         </SettingsItemGroup>
 
@@ -198,7 +365,7 @@ async function handleCopyEnvironmentInfo() {
               bg="#FF2442 dark:#D7223A !opacity-10 !hover:opacity-20"
               un-text="#FF2442 dark:#D7223A"
             >
-              <div i-tabler:book-2 /> 小红书
+              <div i-tabler:book-2 /> {{ t('settings.xiaohongshu') }}
             </a>
           </div>
         </section>
@@ -216,21 +383,122 @@ async function handleCopyEnvironmentInfo() {
             class="contributors-image-link"
           >
             <img
-              :src="browser.runtime.getURL('/assets/contributors.svg')"
+              :src="contributorsImageSrc"
               :alt="$t('settings.current_contributors')"
               loading="lazy"
               @error="handleContributorImageError"
             >
           </a>
         </section>
+        <section w-full data-settings-key="settings.open_source_license" :data-settings-title="$t('settings.open_source_license')">
+          <h3 class="title">
+            {{ $t('settings.open_source_license') }}
+          </h3>
+          <p class="license-desc">
+            {{ $t('settings.open_source_license_desc') }}
+          </p>
+          <ul class="license-copyrights">
+            <li>
+              Copyright (c) 2025 Keleus ·
+              <a href="https://github.com/keleus/BewlyCat" target="_blank">BewlyCat</a>
+            </li>
+            <li>
+              Copyright (c) 2021 Hakadao ·
+              <a href="https://github.com/BewlyBewly/BewlyBewly" target="_blank">BewlyBewly</a>
+              ({{ $t('settings.original_project') }})
+            </li>
+          </ul>
+          <div class="license-actions">
+            <Button type="secondary" size="small" @click="showLicenseDialog = true">
+              <template #left>
+                <div i-tabler:license />
+              </template>
+              {{ $t('settings.view_full_license') }}
+            </Button>
+            <Button type="secondary" size="small" @click="openThirdPartyLicenseDialog">
+              <template #left>
+                <div i-tabler:packages />
+              </template>
+              {{ $t('settings.view_third_party_licenses') }}
+            </Button>
+          </div>
+        </section>
       </section>
     </div>
+
+    <Dialog
+      v-if="showLicenseDialog"
+      :title="t('settings.open_source_license')"
+      width="640px"
+      content-max-height="60vh"
+      :show-footer="false"
+      append-to-bewly-body
+      @close="showLicenseDialog = false"
+    >
+      <pre class="license-text">{{ licenseText }}</pre>
+    </Dialog>
+
+    <Dialog
+      v-if="showThirdPartyLicenseDialog"
+      :title="t('settings.third_party_licenses')"
+      :desc="t('settings.third_party_licenses_desc')"
+      width="640px"
+      content-max-height="60vh"
+      :show-footer="false"
+      append-to-bewly-body
+      @close="showThirdPartyLicenseDialog = false"
+    >
+      <p v-if="thirdPartyLicensesFailed" class="license-desc">
+        {{ t('settings.third_party_licenses_failed') }}
+      </p>
+      <p v-else-if="!thirdPartyLicenses" class="license-desc">
+        {{ t('common.loading') }}
+      </p>
+      <div v-else class="third-party-license-list">
+        <details
+          v-for="item in thirdPartyLicenses"
+          :key="`${item.name}@${item.version}`"
+          class="third-party-license-item"
+        >
+          <summary>
+            <span class="third-party-license-name">{{ item.name }}</span>
+            <span class="third-party-license-meta">{{ item.version }} · {{ item.license }}</span>
+          </summary>
+          <a v-if="item.homepage" :href="item.homepage" target="_blank" class="third-party-license-link">
+            {{ item.homepage }}
+          </a>
+          <pre v-if="item.licenseText" class="license-text">{{ item.licenseText }}</pre>
+        </details>
+      </div>
+    </Dialog>
+
+    <Dialog
+      v-if="showSyncConflictDialog"
+      :title="t('settings.sync_cloud_conflict_title')"
+      width="440px"
+      :show-footer="false"
+      append-to-bewly-body
+      @close="handleSyncDialogClose"
+    >
+      <div class="sync-conflict-body" flex="~ col gap-3">
+        <p text="$bew-text-2 sm">
+          {{ t('settings.sync_cloud_conflict_desc') }}
+        </p>
+        <Button type="primary" @click="enableSyncWithMode('pull')">
+          {{ t('settings.sync_cloud_use_cloud') }}
+        </Button>
+        <Button type="secondary" @click="enableSyncWithMode('push')">
+          {{ t('settings.sync_cloud_use_local') }}
+        </Button>
+      </div>
+    </Dialog>
   </div>
 </template>
 
 <style lang="scss" scoped>
 .title {
-  --uno: "fw-bold mb-2";
+  --uno: "mb-2";
+  font-weight: var(--bew-font-weight-bold);
 }
 
 .about-brand {
@@ -275,6 +543,87 @@ async function handleCopyEnvironmentInfo() {
   text-align: center;
   background: var(--bew-fill-1);
   border-radius: var(--bew-panel-radius);
+}
+
+.license-desc {
+  margin-bottom: var(--bew-space-2);
+  font-size: var(--bew-font-size-control);
+  line-height: var(--bew-line-height-control);
+  color: var(--bew-text-2);
+}
+
+.license-copyrights {
+  margin-bottom: var(--bew-space-3);
+  font-size: var(--bew-font-size-control);
+  line-height: var(--bew-line-height-control);
+  color: var(--bew-text-2);
+
+  a {
+    color: var(--bew-theme-color);
+  }
+}
+
+.license-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bew-space-3);
+  align-items: center;
+}
+
+.license-text {
+  margin: 0;
+  font-family: inherit;
+  font-size: var(--bew-font-size-control);
+  line-height: var(--bew-line-height-control);
+  color: var(--bew-text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.third-party-license-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bew-space-2);
+}
+
+.third-party-license-item {
+  padding: var(--bew-space-2) var(--bew-space-3);
+  background: var(--bew-fill-1);
+  border-radius: var(--bew-radius);
+
+  summary {
+    display: flex;
+    gap: var(--bew-space-2);
+    align-items: baseline;
+    cursor: pointer;
+  }
+
+  &[open] summary {
+    margin-bottom: var(--bew-space-2);
+  }
+
+  .license-text {
+    margin-top: var(--bew-space-2);
+  }
+}
+
+.third-party-license-name {
+  font-size: var(--bew-font-size-control);
+  line-height: var(--bew-line-height-control);
+  color: var(--bew-text-1);
+}
+
+.third-party-license-meta {
+  font-size: var(--bew-font-size-caption);
+  line-height: var(--bew-line-height-caption);
+  color: var(--bew-text-3);
+}
+
+.third-party-license-link {
+  font-size: var(--bew-font-size-caption);
+  line-height: var(--bew-line-height-caption);
+  color: var(--bew-theme-color);
+  overflow-wrap: anywhere;
 }
 
 .link-card {

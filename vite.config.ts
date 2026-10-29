@@ -7,16 +7,20 @@ import AutoImport from 'unplugin-auto-import/vite'
 import type { UserConfig } from 'vite'
 import { defineConfig } from 'vite'
 
-import { isDev, isFirefox, isSafari, port, r } from './scripts/utils'
+import { buildCommit, isDev, isFirefox, isSafari, port, r } from './scripts/utils'
 // import { MV3Hmr } from './vite-mv3-hmr'
 
 export const sharedConfig: UserConfig = {
   root: r('src'),
   resolve: {
-    alias: {
-      '~/': `${r('src')}/`,
-      '~': r('src'),
-    },
+    alias: [
+      { find: '~/', replacement: `${r('src')}/` },
+      { find: '~', replacement: r('src') },
+      // vuedraggable's UMD entry `require`s `vue`, which resolves to the CJS
+      // build and drags the template compiler into the content script.
+      // Templates are precompiled, so every consumer can share the runtime build.
+      { find: /^vue$/, replacement: 'vue/dist/vue.runtime.esm-bundler.js' },
+    ],
   },
   plugins: [
     Vue(),
@@ -45,6 +49,7 @@ export const sharedConfig: UserConfig = {
 
     replace({
       '__DEV__': JSON.stringify(isDev),
+      '__BUILD_COMMIT__': JSON.stringify(buildCommit),
       'process.env.NODE_ENV': JSON.stringify(isDev ? 'development' : 'production'),
       'process.env.FIREFOX': JSON.stringify(isFirefox),
       'process.env.SAFARI': JSON.stringify(isSafari),

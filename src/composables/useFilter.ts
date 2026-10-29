@@ -3,6 +3,9 @@ import { isVerticalVideo } from '~/utils/uriParse'
 
 const get = (obj: any, path: string[]) => path.reduce((acc, part) => acc && acc[part], obj)
 
+// APP 推荐卡片表示已关注 UP 主的推荐理由
+const APP_FOLLOWED_REASONS = ['已关注', '已關注', '新关注', '新關注']
+
 export enum FilterType {
   filterOutVerticalVideos,
   viewCount,
@@ -65,15 +68,6 @@ export function useFilter(isFollowedKeyPath: string[], filterOpt: FilterType[], 
   const filterByTitleStringValues: string[] = []
   const filterByTitleRegExpValues: RegExp[] = []
 
-  settings.value.filterByTitle.forEach((item) => {
-    if (item.keyword.startsWith('/') && item.keyword.endsWith('/')) {
-      filterByTitleRegExpValues.push(new RegExp(item.keyword.slice(1, -1), 'i'))
-    }
-    else {
-      filterByTitleStringValues.push(`${item.keyword}`.toUpperCase())
-    }
-  })
-
   /**
    * Compares the title of an item with the given key path.
    * @param item - The item to compare.
@@ -92,14 +86,39 @@ export function useFilter(isFollowedKeyPath: string[], filterOpt: FilterType[], 
   const filterByUserStringValues: string[] = []
   const filterByUserRegExpValues: RegExp[] = []
 
-  settings.value.filterByUser.forEach((item) => {
-    if (item.keyword.startsWith('/') && item.keyword.endsWith('/')) {
-      filterByUserRegExpValues.push(new RegExp(item.keyword.slice(1, -1), 'i'))
-    }
-    else {
-      filterByUserStringValues.push(`${item.keyword}`.toUpperCase())
-    }
-  })
+  function rebuildKeywordValues() {
+    filterByTitleStringValues.length = 0
+    filterByTitleRegExpValues.length = 0
+    settings.value.filterByTitle.forEach((item) => {
+      if (item.keyword.startsWith('/') && item.keyword.endsWith('/')) {
+        try {
+          filterByTitleRegExpValues.push(new RegExp(item.keyword.slice(1, -1), 'i'))
+        }
+        catch {
+          filterByTitleStringValues.push(item.keyword.toUpperCase())
+        }
+      }
+      else {
+        filterByTitleStringValues.push(item.keyword.toUpperCase())
+      }
+    })
+
+    filterByUserStringValues.length = 0
+    filterByUserRegExpValues.length = 0
+    settings.value.filterByUser.forEach((item) => {
+      if (item.keyword.startsWith('/') && item.keyword.endsWith('/')) {
+        try {
+          filterByUserRegExpValues.push(new RegExp(item.keyword.slice(1, -1), 'i'))
+        }
+        catch {
+          filterByUserStringValues.push(item.keyword.toUpperCase())
+        }
+      }
+      else {
+        filterByUserStringValues.push(item.keyword.toUpperCase())
+      }
+    })
+  }
 
   /**
    * Compares a given item with a key path and determines if it does not meets the filter criteria.
@@ -196,12 +215,14 @@ export function useFilter(isFollowedKeyPath: string[], filterOpt: FilterType[], 
     settings.value.filterByUser,
     settings.value.filterByPublishTime,
   ], ([filterOutVerticalVideos, durationFilter, viewCountFilter, likeCountFilter, titleFilter, userFilter, publishTimeFilter]) => {
+    rebuildKeywordValues()
+
     if (!filterOutVerticalVideos && !durationFilter && !viewCountFilter && !likeCountFilter && !titleFilter && !userFilter && !publishTimeFilter) {
       filter.value = null
       return
     }
     filter.value = factoryFilter(funcMap, filterOpt, keyList)
-  }, { immediate: true })
+  }, { immediate: true, deep: true })
 
   function factoryFilter(funcMap: FuncMap, filterOpt: FilterType[], keyList: KeyPath): (item: any) => boolean {
     interface FuncParams {
@@ -248,7 +269,7 @@ export function useFilter(isFollowedKeyPath: string[], filterOpt: FilterType[], 
       return isFollowed && settings.value.disableFilterForFollowedUser
     }
     if (settings.value.recommendationMode === 'app') {
-      const isFollowed = get(item, isFollowedKeyPath) === '已关注' || get(item, isFollowedKeyPath) === '已關注'
+      const isFollowed = APP_FOLLOWED_REASONS.includes(get(item, isFollowedKeyPath))
       return isFollowed && settings.value.disableFilterForFollowedUser
     }
     return false

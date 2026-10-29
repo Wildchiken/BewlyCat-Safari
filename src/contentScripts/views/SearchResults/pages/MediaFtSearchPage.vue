@@ -121,7 +121,7 @@ async function performSearch(loadMore: boolean): Promise<boolean> {
 
   const success = await search(
     keyword,
-    params => api.search.searchMediaFt(params),
+    (params, request) => api.search.searchMediaFt(params, request),
     {
       page: targetPage,
       page_size: SEARCH_PAGE_SIZES.pgc,
@@ -184,15 +184,17 @@ async function handlePageChange(page: number) {
 
   const success = await search(
     keyword,
-    params => api.search.searchMediaFt(params),
+    (params, request) => api.search.searchMediaFt(params, request),
     {
       page,
       page_size: SEARCH_PAGE_SIZES.pgc,
     },
   )
 
-  if (!success || !lastResponse.value?.data)
+  if (!success || !lastResponse.value?.data) {
+    isPageChanging.value = false
     return
+  }
 
   const rawData = lastResponse.value.data
   const incomingList = Array.isArray(rawData?.result) ? rawData.result : []
@@ -262,12 +264,12 @@ defineExpose({
             </div>
           </a>
           <div class="media-ft-highlight-info">
-            <div class="media-ft-highlight-title" text="lg $bew-text-1" font-medium>
+            <div class="media-ft-highlight-title bew-card-title-text" text="$bew-text-1" font-medium>
               {{ item.title }}
             </div>
             <div class="media-ft-highlight-meta" text="sm $bew-text-3" flex items-center gap-2>
               <span v-if="item.score" text="$bew-theme-color" font-bold>
-                {{ item.score?.toFixed(1) }} 分
+                {{ t('search.score', { score: item.score?.toFixed(1) }) }}
               </span>
               <span v-if="item.areas">
                 {{ item.areas }}
@@ -294,7 +296,7 @@ defineExpose({
                 target="_blank"
                 @click.stop
               >
-                立即观看
+                {{ t('search.watch_now') }}
               </a>
             </div>
           </div>

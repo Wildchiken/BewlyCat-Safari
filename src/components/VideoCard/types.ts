@@ -1,15 +1,42 @@
 import type { ThreePointV2 } from '~/models/video/appForYou'
 
+/** Data-only interaction state survives offscreen card recycling. */
+export interface VideoCardState {
+  removed: boolean
+  videoCurrentTime: number | null
+}
+
+export function createVideoCardState(): VideoCardState {
+  return { removed: false, videoCurrentTime: null }
+}
+
+/**
+ * 由页面持有的移除遮罩：confirming 时显示「确定/取消」等待确认，
+ * 确认移除后卡片保留在原位，显示「还原」用于重新加回。
+ */
+export interface VideoCardRemovedState {
+  message: string
+  confirming?: boolean
+  pending?: boolean
+  onConfirm?: () => void
+  onCancel?: () => void
+  onUndo?: () => void
+}
+
 export interface Video {
   id: number
   duration?: number
   durationStr?: string
+  /** 播放进度百分比（0–100）；不传时隐藏封面底部进度条。 */
+  playbackProgress?: number
   title: string
   desc?: string
   cover: string
 
   /** `author` for individual submissions by UP; `authorList` for collaborative submissions by UP */
   author?: Author | Author[]
+  /** UP 主投稿接口的查询范围；联合投稿的主投稿人可能是其他用户。 */
+  sourceUploaderMid?: number
 
   view?: number
   viewStr?: string
@@ -37,7 +64,12 @@ export interface Video {
   liveStatus?: number
   trackId?: string
 
+  /** API-provided display labels, such as recommendation reasons or “1万点赞”. */
   tag?: string | string[]
+  /** Real content tags exposed on search-result pages; clicking these starts a search. */
+  searchableTags?: string[]
+  /** Searchable video partition name from APIs, such as `tname`, `typename` or history `tag_name`. */
+  category?: string
   rank?: number
   type?: 'horizontal' | 'vertical' | 'bangumi' | 'ketang'
   threePointV2: ThreePointV2[]

@@ -57,24 +57,24 @@ xcrun safari-web-extension-converter ./extension-safari \
 本项目已针对 Safari 做了以下适配：
 
 ### ✅ 已适配
-- **`world: 'MAIN'` 不支持** → 改为 content script 动态注入 `<script>` 标签
-- **`storage.sync` 需要 iCloud** → 添加了 `safeSyncStorageGetAll/set` 降级函数
-- **`storage.session` 需 Safari 16.4+** → 已有 try-catch 降级到内存存储
-- **`declarativeNetRequest`** → 静态规则 (rules.json) 在 Safari 15+ 可用；动态 UA 规则改用 `webRequest` API
-- **`webRequest` + `webRequestBlocking`** → 已添加对应的权限和监听器
-- **`scripting.executeScript`** → 已跳过，使用动态 `<script>` 标签注入
+- **`world: 'MAIN'` 不支持** → content script 读取 `inject.global.js` 后以内联 `<script>` 注入页面上下文；inject 会回补注入前已注册的评论组件
+- **`scripting` 权限** → Safari 构建不申请，也不依赖 `scripting.executeScript`
+- **后台请求 Cookie** → 按目标接口地址读取 Cookie 并随请求附带（Safari 无容器）
+- **移动端跳转拦截** → 同时使用 `declarativeNetRequest` 动态规则与 `webRequest` 监听，任一生效即可
+- **评论区文字颜色** → Safari 中为评论正文、用户名、富文本补充主题文字色
+- **`storage.sync` 需要 iCloud** → 未登录 iCloud 时开启云同步会失败并自动回滚开关，导入设置不受影响
 
 ### ⚠️ 已知限制
-- **`storage.sync` (iCloud)**：如果用户未登录 iCloud，云同步功能会自动降级，不会影响其他功能
-- **图片加载**：Safari 对 WKWebView 中动态创建的 `<link>` 样式加载可能有不同的行为
-- **扩展更新**：Safari 扩展更新需要通过 Xcode 重新构建分发
+- **`storage.sync` (iCloud)**：未登录 iCloud 时无法使用设置云同步，其他功能不受影响
+- **inject 脚本时机**：注入为异步，略晚于 Chrome/Firefox 的 `document_start` MAIN world 注入
+- **扩展更新**：未签名扩展需要手动替换文件夹；Xcode 打包的版本需要重新构建分发
 
 ### 🔧 故障排除
 
 如果扩展在 Safari 中无法正常工作：
 
 1. 检查 Safari 控制台是否有错误信息（Develop → Show JavaScript Console）
-2. 确认 `manifest.json` 中的 `browser_specific_settings` 配置正确
+2. 确认已在 Safari 设置 → 扩展中为 bilibili.com 授予网站访问权限
 3. 尝试重新构建并安装
 
 ## Safari Web Extension 资源

@@ -1,7 +1,23 @@
-import type { DisplayMoment, WatchLaterTarget } from './types'
+import type { DisplayMoment } from './types'
 
-function httpsUrl(url = '') {
+export function httpsUrl(url = '') {
   return url.replace(/^http:/, 'https:')
+}
+
+export function getSafeImageRatio(width: number, height: number) {
+  const ratio = width / height
+  return Number.isFinite(ratio) && ratio > 0 ? ratio : undefined
+}
+
+/** 视频跳转地址：优先接口给出的 jump_url，其次按 bvid / aid 拼接 */
+export function getMomentVideoUrl(video: { videoUrl?: string, bvid?: string, aid?: number | string }) {
+  if (video.videoUrl)
+    return video.videoUrl
+  if (video.bvid)
+    return `https://www.bilibili.com/video/${video.bvid}`
+  if (video.aid)
+    return `https://www.bilibili.com/video/av${video.aid}`
+  return ''
 }
 
 export function getMomentThumbnailUrl(url = '', width = 560) {
@@ -74,15 +90,6 @@ export function isCompactPlainTextMoment(moment: DisplayMoment) {
     && (!moment.additional || isReservation)
 }
 
-export function getWatchLaterStateKey(target: WatchLaterTarget) {
-  const aid = Number(target.aid || 0)
-  if (aid)
-    return `aid:${aid}`
-  if (target.bvid)
-    return `bvid:${target.bvid}`
-  return target.epid ? `epid:${target.epid}` : ''
-}
-
 export type MomentLinkKind = 'video' | 'moment' | 'other'
 
 export function getAuthorSpaceUrl(mid?: string | number) {
@@ -133,6 +140,9 @@ export const LANDSCAPE_SINGLE_IMAGE_MAX_WIDTH = 560
 export const MULTI_IMAGE_GALLERY_MAX_HEIGHT = 350
 /** 与 `.moment-image-gallery__track` 的 gap（`--bew-space-2`）保持一致 */
 export const MULTI_IMAGE_GALLERY_GAP = 8
+/** 与 `.moment-image-grid` 的 gap（`--bew-space-2`）保持一致 */
+export const NINE_GRID_GAP = 8
+export const NINE_GRID_COLUMNS = 3
 /** 露出下一张的最小宽度，保证至少能看到「1 张多一点」 */
 const MULTI_IMAGE_GALLERY_PEEK_MIN = 48
 const MULTI_IMAGE_GALLERY_PEEK_RATIO = 0.18
@@ -181,6 +191,31 @@ export function computeMultiImageGalleryHeight(
   const peek = getMultiImageGalleryPeekWidth(containerWidth)
   const height = Math.round((containerWidth - MULTI_IMAGE_GALLERY_GAP - peek) / firstRatio)
   return Math.min(maxHeight, Math.max(1, height))
+}
+
+/**
+ * 接口下发为九宫格类型（MAJOR_TYPE_DRAW）的多图动态按宫格展示，不限张数；单图仍走单张大图。
+ */
+export function shouldUseMomentImageGrid(images: string[] | undefined, isNineGrid?: boolean) {
+  return Boolean(isNineGrid && (images?.length || 0) >= 2)
+}
+
+/** 2 张并排、4 张田字使用两列，其余三列 */
+export function getMomentImageGridColumns(imageCount: number) {
+  return imageCount === 2 || imageCount === 4 ? 2 : NINE_GRID_COLUMNS
+}
+
+/** 单元格尺寸统一按三列计算，两列宫格只占约 2/3 宽度 */
+export function computeMomentImageGridHeight(containerWidth: number, imageCount: number) {
+  if (!(containerWidth > 0) || imageCount <= 0)
+    return 0
+
+  const rows = Math.ceil(imageCount / getMomentImageGridColumns(imageCount))
+  const cellSize = Math.max(
+    1,
+    (containerWidth - NINE_GRID_GAP * (NINE_GRID_COLUMNS - 1)) / NINE_GRID_COLUMNS,
+  )
+  return Math.round(cellSize * rows + NINE_GRID_GAP * (rows - 1))
 }
 
 export function shouldUseMomentImageGallery(

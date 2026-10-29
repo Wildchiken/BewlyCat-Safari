@@ -30,15 +30,36 @@ import {
 import { settings } from '~/logic'
 import { checkLoginStatus, LoginStatus, parseDedeUserID } from '~/logic/loginStatus'
 import { parseTopBarPublicationTime, recordUploaderLatestVideoTimes } from '~/logic/uploaderLatestVideoTimes'
+import { markWatchLater, noteWatchLaterCount } from '~/logic/watchLaterState'
 import type { List as VideoItem } from '~/models/video/watchLater'
 import api from '~/utils/api'
+import { stripBilibiliLocaleUrl } from '~/utils/bilibiliLocale'
 import { shouldShowBewlyTopBar } from '~/utils/bilibiliTopBar'
+import { i18n } from '~/utils/i18n'
 import { getCSRF, isHomePage } from '~/utils/main'
 import { isBackgroundUnavailableError, onMessage, sendMessage } from '~/utils/messaging'
+import {
+  fetchNewerMoments,
+  fetchUnreadMomentIds,
+  getLastSeenStartOffset,
+  isNewerDynamicId,
+  isNotOlderDynamicId,
+} from '~/utils/momentsLastSeen'
+import { getNotificationBadgeCounts } from '~/utils/notificationBadge'
+import type { AddOpenTabsResult } from '~/utils/openTabsWatchLater'
+import { addOpenTabsToWatchLater } from '~/utils/openTabsWatchLater'
+import { getOpenBilibiliTabUrls } from '~/utils/tabs'
 
 export const LOGIN_RECHECK_INTERVAL = 1000 * 60 // 已登录但 userInfo 未填充时重查的间隔
 
 const DAY_MILLISECONDS = 24 * 60 * 60 * 1000
+const MAX_TOP_BAR_MOMENTS = 200
+// 未读超过该数量时才从上次看到的位置开始加载，否则分界线就在首页
+const TOP_BAR_LAST_SEEN_MIN_UNREAD = 8
+// 定位后分界线上方保留的未读条数
+const TOP_BAR_LAST_SEEN_CONTEXT = 3
+// 每次向上加载跨越的未读视频条数
+const TOP_BAR_LAST_SEEN_STEP = 10
 
 function getNextReceiveAt(nextReceiveDays?: number, periodEndUnix?: number): number | null {
   if (Number.isFinite(periodEndUnix) && periodEndUnix! > 0)
@@ -65,38 +86,9 @@ export const useTopBarStore = defineStore('topBar', () => {
   const unReadMessage = reactive<UnReadMessage>({} as UnReadMessage)
   const unReadDm = reactive<UnReadDm>({} as UnReadDm)
 
-  const MESSAGE_KEYS_TO_COUNT: Array<keyof UnReadMessage> = ['reply', 'at', 'chat', 'sys_msg']
-
-  function getLikeUnreadCount(): number {
-    const likeCount = typeof unReadMessage.like === 'number' ? unReadMessage.like : 0
-    const recvLike = (unReadMessage as UnReadMessage & { recv_like?: number }).recv_like
-    const recvLikeCount = typeof recvLike === 'number' ? recvLike : 0
-
-    return Math.max(likeCount, recvLikeCount)
-  }
-
-  const unReadMessageCount = computed((): number => {
-    let result = 0
-
-    // 统计顶栏默认展示的消息类型
-    MESSAGE_KEYS_TO_COUNT.forEach((key) => {
-      const value = unReadMessage[key]
-      if (typeof value === 'number')
-        result += value
-    })
-
-    // 可选地将点赞提醒计入顶栏通知角标
-    if (settings.value.showLikeNotificationReminder)
-      result += getLikeUnreadCount()
-
-    // 计算 unReadDm 中的未读消息
-    if (typeof unReadDm.follow_unread === 'number')
-      result += unReadDm.follow_unread
-    if (typeof unReadDm.unfollow_unread === 'number')
-      result += unReadDm.unfollow_unread
-
-    return result
-  })
+  const unReadMessageCount = computed((): number => Object.values(
+    getNotificationBadgeCounts(settings.value, unReadMessage, unReadDm),
+  ).reduce((total, count) => total + count, 0))
 
   // Moments State
   const newMomentsCount = ref<number>(0)
@@ -117,15 +109,27 @@ export const useTopBarStore = defineStore('topBar', () => {
   let watchLaterListRequested = false
   const favoriteStateVersion = ref(0)
   const isLoadingWatchLater = ref<boolean>(false)
+  const isAddingOpenTabsToWatchLater = ref(false)
+  const openTabsWatchLaterProgress = ref<AddOpenTabsResult>()
+  const openTabsWatchLaterError = ref('')
   // 添加 Moments 相关状态
   const moments = reactive<any[]>([])
-  const addedWatchLaterList = reactive<number[]>([])
   const isLoadingMoments = ref<boolean>(false)
   const noMoreMomentsContent = ref<boolean>(false)
   const livePage = ref<number>(1)
   const momentUpdateBaseline = ref<string>('')
   const momentOffset = ref<string>('')
   const collaborativeVideoMap = new Map<string, { item: any, moment?: any }>()
+  // 上次看到定位：未读视频动态 ID（新到旧），为空表示无未读或未取到
+  const momentUnreadIds = ref<string[]>([])
+  // entrance 请求成功过；失败时新动态标记退回按 newMomentsCount 下标判断
+  const momentUnreadIdsLoaded = ref<boolean>(false)
+  // 已加载原始条目中最新的动态 ID，用作向上加载的衔接点
+  const momentNewestLoadedId = ref<string>('')
+  const hasNewerMoments = ref<boolean>(false)
+  const isLoadingNewerMoments = ref<boolean>(false)
+  // 打开下拉/切换 Tab 时递增，丢弃上一轮初始化的在途响应
+  let momentsGeneration = 0
 
   // B币领取状态
   const privilegeInfo = reactive<PrivilegeInfo>({} as PrivilegeInfo)
@@ -149,6 +153,7 @@ export const useTopBarStore = defineStore('topBar', () => {
   const notificationsDrawerUrl = ref<string>('https://message.bilibili.com/')
   const popupVisible = reactive({
     channels: false,
+    pinnedChannels: false,
     userPanel: false,
     notifications: false,
     moments: false,
@@ -169,10 +174,11 @@ export const useTopBarStore = defineStore('topBar', () => {
   })
 
   const isTopBarFixed = computed((): boolean => {
+    const pageUrl = stripBilibiliLocaleUrl(location.href)
     if (
       isHomePage()
-      || VIDEO_LIST_URL.test(location.href)
-      || BANGUMI_PLAY_URL.test(location.href)
+      || VIDEO_LIST_URL.test(pageUrl)
+      || BANGUMI_PLAY_URL.test(pageUrl)
       || MOMENTS_URL.test(location.href)
       || CHANNEL_PAGE_URL.test(location.href)
       || READ_HOME_URL.test(location.href)
@@ -221,7 +227,6 @@ export const useTopBarStore = defineStore('topBar', () => {
     watchLaterRefreshGeneration++
     watchLaterLoadingGeneration++
     watchLaterListRequested = false
-    addedWatchLaterList.splice(0)
     moments.splice(0)
     livePage.value = 1
     momentUpdateBaseline.value = ''
@@ -230,6 +235,7 @@ export const useTopBarStore = defineStore('topBar', () => {
     isLoadingMoments.value = false
     isLoadingWatchLater.value = false
     collaborativeVideoMap.clear()
+    resetMomentsLastSeenState()
     Object.keys(privilegeInfo).forEach(key => Reflect.deleteProperty(privilegeInfo, key))
     resetReceiveStates()
   }
@@ -587,7 +593,7 @@ export const useTopBarStore = defineStore('topBar', () => {
   }
 
   // Moments Methods
-  async function getTopBarNewMomentsCount(selectedType: string = 'video') {
+  async function getTopBarNewMomentsCount() {
     const accountId = userInfo.mid
     if (!isCurrentAccount(accountId) || isLoadingMoments.value)
       return
@@ -595,13 +601,11 @@ export const useTopBarStore = defineStore('topBar', () => {
     try {
       isLoadingMoments.value = true
 
-      const res = await api.moment.getMomentsUpdate({
-        type: selectedType,
-        update_baseline: '0',
-      })
-
-      if (res.code === 0 && res.data && isCurrentAccount(accountId)) {
-        newMomentsCount.value = res.data.update_num
+      // 与 B 站顶栏一致取 entrance 的计数：feed/all/update 的 update_num 最多返回 99，徽标无法显示 99+
+      const res = await api.moment.getTopBarNewMomentsCount({})
+      const count = res.data?.update_info?.item?.count
+      if (res.code === 0 && typeof count === 'number' && isCurrentAccount(accountId)) {
+        newMomentsCount.value = count
       }
     }
     catch (error) {
@@ -649,6 +653,8 @@ export const useTopBarStore = defineStore('topBar', () => {
       if (res.code === 0 && isCurrentAccount(accountId)) {
         const countChanged = watchLaterCount.value !== res.data.count
         watchLaterCount.value = res.data.count
+        if (countChanged)
+          noteWatchLaterCount(res.data.count)
 
         // 数量变化意味着服务器列表已换代，旧列表与游标不能继续混用。
         if (shouldRefreshWatchLaterList(countChanged, res.data.count)) {
@@ -745,7 +751,7 @@ export const useTopBarStore = defineStore('topBar', () => {
         )
         // 删除会让服务器列表前移，页边界可能与已加载内容重叠，按 aid 去重兜底
         const existingIds = new Set(watchLaterList.map(item => item.aid))
-        const newItems = res.data.list.filter(item => !existingIds.has(item.aid))
+        const newItems = res.data.list.filter((item: VideoItem) => !existingIds.has(item.aid))
         watchLaterList.push(...newItems)
       }
     }
@@ -762,11 +768,63 @@ export const useTopBarStore = defineStore('topBar', () => {
     }
   }
 
-  // 删除稍后再看项目
-  async function deleteWatchLaterItem(_index: number, aid: number) {
+  async function addOpenTabVideosToWatchLater() {
+    if (isAddingOpenTabsToWatchLater.value)
+      return
+
+    openTabsWatchLaterProgress.value = { total: 0, added: 0, skipped: 0, failed: 0 }
+    openTabsWatchLaterError.value = ''
+    const accountId = getLocalLoginMid()
+    const csrf = getCSRF()
+    const t = i18n.global.t
+    if (!isLogin.value || accountId === undefined || !csrf) {
+      openTabsWatchLaterError.value = t('moments.login_to_watch_later')
+      return
+    }
+
+    const accountUnchanged = () => isLogin.value && getLocalLoginMid() === accountId && getCSRF() === csrf
+    isAddingOpenTabsToWatchLater.value = true
+    try {
+      const urls = await getOpenBilibiliTabUrls()
+      const result = await addOpenTabsToWatchLater(urls, csrf, accountUnchanged, (progress) => {
+        if (accountUnchanged())
+          openTabsWatchLaterProgress.value = progress
+      })
+      if (!accountUnchanged()) {
+        openTabsWatchLaterError.value = t('watch_later.add_open_tabs_account_changed')
+        return
+      }
+
+      openTabsWatchLaterProgress.value = result
+      if (result.added > 0) {
+        const refresh = () => {
+          if (!accountUnchanged())
+            return
+          void syncWatchLaterState(true).catch((error) => {
+            console.error('刷新顶栏稍后再看状态失败:', error)
+          })
+        }
+        refresh()
+        // 写入后查询偶尔短暂返回旧数据，补一次最终状态。
+        window.setTimeout(refresh, 1000)
+      }
+    }
+    catch (error) {
+      console.error('添加打开标签页到稍后再看失败:', error)
+      openTabsWatchLaterError.value = t(accountUnchanged()
+        ? 'moments.watch_later_operation_failed'
+        : 'watch_later.add_open_tabs_account_changed')
+    }
+    finally {
+      isAddingOpenTabsToWatchLater.value = false
+    }
+  }
+
+  // 删除稍后再看项目，返回是否删除成功
+  async function deleteWatchLaterItem(_index: number, aid: number): Promise<boolean> {
     const accountId = userInfo.mid
     if (!isCurrentAccount(accountId))
-      return
+      return false
 
     try {
       const res = await api.watchlater.removeFromWatchLater({
@@ -774,6 +832,7 @@ export const useTopBarStore = defineStore('topBar', () => {
         csrf: getCSRF(),
       })
       if (res.code === 0 && isCurrentAccount(accountId)) {
+        markWatchLater({ aid }, false)
         const currentIndex = watchLaterList.findIndex(item => item.aid === aid)
         if (currentIndex !== -1) {
           watchLaterList.splice(currentIndex, 1)
@@ -792,154 +851,302 @@ export const useTopBarStore = defineStore('topBar', () => {
             console.error('刷新顶栏稍后再看状态失败:', error)
           })
         }, 800)
+        return true
       }
     }
     catch (error) {
       console.error(error)
     }
+    return false
   }
 
-  function initMomentsData(selectedType: string) {
+  // 撤销删除：重新加入稍后再看，并把条目放回原位置，返回是否成功
+  async function restoreWatchLaterItem(item: VideoItem, index: number): Promise<boolean> {
+    const accountId = userInfo.mid
+    if (!isCurrentAccount(accountId))
+      return false
+
+    try {
+      const res = await api.watchlater.saveToWatchLater({
+        aid: item.aid,
+        csrf: getCSRF(),
+      })
+      if (res.code !== 0) {
+        toast.error(res.message)
+        return false
+      }
+      if (!isCurrentAccount(accountId))
+        return false
+
+      markWatchLater({ aid: item.aid, bvid: item.bvid }, true)
+      if (!watchLaterList.some(video => video.aid === item.aid)) {
+        // 重新加入的条目落在服务器已加载前缀内，计数与游标同步加一以保持翻页对齐
+        watchLaterList.splice(Math.min(index, watchLaterList.length), 0, item)
+        watchLaterCount.value++
+        watchLaterCursor.value++
+        watchLaterEpoch++
+        watchLaterRefreshGeneration++
+        watchLaterLoadingGeneration++
+        isLoadingWatchLater.value = false
+      }
+
+      // 与删除相同，延迟同步避免接口短暂返回旧数量
+      window.setTimeout(() => {
+        void syncWatchLaterState(true).catch((error) => {
+          console.error('刷新顶栏稍后再看状态失败:', error)
+        })
+      }, 800)
+      return true
+    }
+    catch (error) {
+      console.error(error)
+      return false
+    }
+  }
+
+  function resetMomentsLastSeenState() {
+    momentsGeneration++
+    momentUnreadIds.value = []
+    momentUnreadIdsLoaded.value = false
+    momentNewestLoadedId.value = ''
+    hasNewerMoments.value = false
+    isLoadingNewerMoments.value = false
+  }
+
+  // options.lastSeenIds：跳到上次看到的位置时复用已取到的未读 ID。首页请求后服务端已读位置已推进，
+  // 重新请求 entrance 只会得到空列表。
+  async function initMomentsData(selectedType: string, options: { lastSeenIds?: string[] } = {}) {
     // 重置所有相关状态
     moments.splice(0) // 使用 splice 正确清空响应式数组
     momentUpdateBaseline.value = ''
     momentOffset.value = ''
-    // newMomentsCount.value = 0
     livePage.value = 1
     noMoreMomentsContent.value = false
     isLoadingMoments.value = false // 重置加载状态,防止卡住
     collaborativeVideoMap.clear()
+    resetMomentsLastSeenState()
 
-    // 获取初始数据
-    getMomentsData(selectedType)
+    if (selectedType === 'live') {
+      getTopBarLiveMoments()
+      return
+    }
+
+    // 先取未读 ID 再请求列表：首页请求会推进服务端已读位置，之后就拿不到分界点了
+    const accountId = userInfo.mid
+    const generation = momentsGeneration
+    let unreadIds: string[] | null = options.lastSeenIds ?? null
+    if (!options.lastSeenIds) {
+      isLoadingMoments.value = true
+      unreadIds = await fetchUnreadMomentIds()
+      if (generation !== momentsGeneration || !isCurrentAccount(accountId))
+        return
+      isLoadingMoments.value = false
+    }
+
+    momentUnreadIds.value = unreadIds || []
+    momentUnreadIdsLoaded.value = unreadIds !== null
+    const startFromLastSeen = Boolean(options.lastSeenIds) || settings.value.momentsStartFromLastSeen
+    // 未读较少时分界线就在首页，按原流程从顶部加载
+    if (startFromLastSeen && momentUnreadIds.value.length > TOP_BAR_LAST_SEEN_MIN_UNREAD) {
+      momentOffset.value = getLastSeenStartOffset(momentUnreadIds.value, TOP_BAR_LAST_SEEN_CONTEXT)
+      hasNewerMoments.value = Boolean(momentOffset.value)
+    }
+
+    await getTopBarMoments(selectedType)
   }
 
   function getMomentsData(selectedType: string) {
     if (selectedType !== 'live')
-      getTopBarMoments(selectedType)
+      void getTopBarMoments(selectedType)
     else
       getTopBarLiveMoments()
   }
 
-  function getTopBarMoments(selectedType: string) {
+  /** 过滤、合并联合投稿并映射为顶栏条目；返回值需由调用方插入列表后再 linkCollaborativeMoments */
+  function buildTopBarMomentItems(items: any[], selectedType: string) {
+    // 根据 selectedType 和设置过滤数据
+    // type: 8 是视频，type: 64 是专栏
+    let filteredItems = items
+
+    // 如果是视频类型，根据设置决定是否过滤专栏
+    if (selectedType === 'video') {
+      if (settings.value.filterArticlesInMoments) {
+        // 开启过滤专栏：只保留视频（type: 8）
+        filteredItems = items.filter((item: any) => item.type === 8)
+      }
+      else {
+        // 关闭过滤专栏：保留视频和专栏（type: 8 或 64）
+        filteredItems = items.filter((item: any) => item.type === 8 || item.type === 64)
+      }
+    }
+
+    const latestVideoTimes = filteredItems
+      .filter((item: any) => item.type === 8)
+      .flatMap((item: any) => {
+        const time = parseTopBarPublicationTime(item.pub_time)
+        if (!time)
+          return []
+
+        const authors = Array.isArray(item.authors) && item.authors.length > 0
+          ? item.authors
+          : [item.author]
+        return authors.map((author: any) => ({
+          mid: author?.mid,
+          time,
+        }))
+      })
+    void recordUploaderLatestVideoTimes(latestVideoTimes, 'topbar-pop')
+
+    // 合并联合投稿视频：按接口返回的时间顺序遍历处理，
+    // 专栏（type 64）无 bvid 会原样保留在原位，仅对视频（type 8）
+    // 做联合投稿合并去重；不能把视频和专栏分开后再拼接，
+    // 否则专栏会被整体排到列表尾部，打乱时间序
+    let processedItems = filteredItems
+    if (selectedType === 'video')
+      processedItems = mergeCollaborativeVideos(filteredItems)
+
+    return processedItems.map((item: any) => ({
+      item,
+      moment: {
+        type: selectedType,
+        itemType: item.type,
+        title: item.title,
+        author: item.authors ? item.authors.map((a: any) => a.name).join(' / ') : item.author.name,
+        authorFace: item.author.face,
+        authorJumpUrl: item.author.jump_url,
+        pubTime: item.pub_time,
+        cover: item.cover,
+        link: item.jump_url,
+        rid: item.rid,
+        isCollaborative: !!item.authors,
+        authors: item.authors,
+        dynId: item.id_str,
+        // TransitionGroup 子元素需要唯一 key
+        id_str: item.rid != null ? `${item.type}-${item.rid}` : item.jump_url,
+      },
+    }))
+  }
+
+  function linkCollaborativeMoments(entries: Array<{ item: any, moment: any }>, selectedType: string) {
+    if (selectedType !== 'video')
+      return
+    entries.forEach(({ item, moment }) => {
+      if (item.type !== 8)
+        return
+      const bvid = extractBvid(item)
+      if (!bvid)
+        return
+      const entry = collaborativeVideoMap.get(bvid)
+      if (!entry)
+        return
+      entry.moment = moment
+      updateMomentCollaborative(moment, entry.item)
+    })
+  }
+
+  function noteNewestLoadedMoment(items: any[]) {
+    const newestId = items[0]?.id_str
+    if (newestId && (!momentNewestLoadedId.value || isNewerDynamicId(newestId, momentNewestLoadedId.value)))
+      momentNewestLoadedId.value = newestId
+  }
+
+  function getTopBarMoments(selectedType: string): Promise<void> {
     const accountId = userInfo.mid
     if (!isCurrentAccount(accountId) || isLoadingMoments.value || noMoreMomentsContent.value)
-      return
+      return Promise.resolve()
+    if (moments.length >= MAX_TOP_BAR_MOMENTS) {
+      noMoreMomentsContent.value = true
+      return Promise.resolve()
+    }
 
+    const generation = momentsGeneration
+    const isCurrentRequest = () => generation === momentsGeneration && isCurrentAccount(accountId)
     isLoadingMoments.value = true
-    api.moment.getTopBarMoments({
+    return api.moment.getTopBarMoments({
       type: selectedType,
       update_baseline: momentUpdateBaseline.value || undefined,
       offset: momentOffset.value || undefined,
     })
       .then((res: any) => {
-        if (res.code === 0 && isCurrentAccount(accountId)) {
-          const { has_more, items, offset, update_baseline } = res.data
+        if (res.code !== 0 || !isCurrentRequest())
+          return
 
-          if (!has_more) {
-            noMoreMomentsContent.value = true
-            return
-          }
+        const { has_more, items, offset, update_baseline } = res.data
+        momentUpdateBaseline.value = update_baseline
+        momentOffset.value = offset
+        if (!has_more)
+          noMoreMomentsContent.value = true
+        if (!items?.length)
+          return
 
-          // 更新状态
-          // newMomentsCount.value = update_num
-          momentUpdateBaseline.value = update_baseline
-          momentOffset.value = offset
-
-          // 添加新内容
-          if (items?.length) {
-            // 根据 selectedType 和设置过滤数据
-            // type: 8 是视频，type: 64 是专栏
-            let filteredItems = items
-
-            // 如果是视频类型，根据设置决定是否过滤专栏
-            if (selectedType === 'video') {
-              if (settings.value.filterArticlesInMoments) {
-                // 开启过滤专栏：只保留视频（type: 8）
-                filteredItems = items.filter((item: any) => item.type === 8)
-              }
-              else {
-                // 关闭过滤专栏：保留视频和专栏（type: 8 或 64）
-                filteredItems = items.filter((item: any) => item.type === 8 || item.type === 64)
-              }
-            }
-
-            const latestVideoTimes = filteredItems
-              .filter((item: any) => item.type === 8)
-              .flatMap((item: any) => {
-                const time = parseTopBarPublicationTime(item.pub_time)
-                if (!time)
-                  return []
-
-                const authors = Array.isArray(item.authors) && item.authors.length > 0
-                  ? item.authors
-                  : [item.author]
-                return authors.map((author: any) => ({
-                  mid: author?.mid,
-                  time,
-                }))
-              })
-            void recordUploaderLatestVideoTimes(latestVideoTimes, 'topbar-pop')
-
-            // 合并联合投稿视频 - 只对视频类型进行合并
-            let processedItems = filteredItems
-            if (selectedType === 'video') {
-              // 只合并视频，不合并专栏
-              const videos = filteredItems.filter((item: any) => item.type === 8)
-              const articles = filteredItems.filter((item: any) => item.type === 64)
-              const mergedVideos = mergeCollaborativeVideos(videos)
-              // 将合并后的视频和专栏合并到一起
-              processedItems = [...mergedVideos, ...articles]
-            }
-
-            // 如果是第一次加载（offset为空），需要根据过滤和合并后的实际数量调整 newMomentsCount
-            // 因为过滤专栏和合并联合投稿会导致显示的条目数量少于原始的 update_num
-            if (!momentOffset.value && selectedType === 'video') {
-              // 计算过滤前有多少新内容
-              const originalNewCount = newMomentsCount.value
-              // 计算过滤和合并后的实际条目数
-              const actualNewCount = Math.min(originalNewCount, processedItems.length)
-              // 更新为实际的新内容数量
-              newMomentsCount.value = actualNewCount
-            }
-
-            processedItems.forEach((item: any) => {
-              const momentItem = {
-                type: selectedType,
-                itemType: item.type,
-                title: item.title,
-                author: item.authors ? item.authors.map((a: any) => a.name).join(' / ') : item.author.name,
-                authorFace: item.author.face,
-                authorJumpUrl: item.author.jump_url,
-                pubTime: item.pub_time,
-                cover: item.cover,
-                link: item.jump_url,
-                rid: item.rid,
-                isCollaborative: !!item.authors,
-                authors: item.authors,
-              }
-
-              moments.push(momentItem)
-
-              if (selectedType === 'video' && item.type === 8) {
-                const bvid = extractBvid(item)
-                if (!bvid)
-                  return
-                const entry = collaborativeVideoMap.get(bvid)
-                if (!entry)
-                  return
-                entry.moment = momentItem
-                updateMomentCollaborative(momentItem, entry.item)
-              }
-            })
-          }
-        }
+        noteNewestLoadedMoment(items)
+        const entries = buildTopBarMomentItems(items, selectedType)
+          .slice(0, Math.max(0, MAX_TOP_BAR_MOMENTS - moments.length))
+        moments.push(...entries.map(entry => entry.moment))
+        linkCollaborativeMoments(entries, selectedType)
+        if (moments.length >= MAX_TOP_BAR_MOMENTS)
+          noMoreMomentsContent.value = true
       })
       .catch(error => console.error(error))
       .finally(() => {
-        if (isCurrentAccount(accountId))
+        if (isCurrentRequest())
           isLoadingMoments.value = false
       })
+  }
+
+  /** 从上次看到的位置向上加载更新的动态；到达顶部时会请求首页，服务端随之标记为已读 */
+  async function getNewerTopBarMoments(selectedType: string) {
+    const accountId = userInfo.mid
+    if (
+      !isCurrentAccount(accountId)
+      || !hasNewerMoments.value
+      || isLoadingNewerMoments.value
+      || !momentNewestLoadedId.value
+    ) {
+      return
+    }
+
+    const generation = momentsGeneration
+    const isCurrentRequest = () => generation === momentsGeneration && isCurrentAccount(accountId)
+    isLoadingNewerMoments.value = true
+    try {
+      const result = await fetchNewerMoments(
+        async (offset) => {
+          const res: any = await api.moment.getTopBarMoments({
+            type: selectedType,
+            offset: offset || undefined,
+          })
+          if (res.code !== 0 || !isCurrentRequest())
+            return null
+          return {
+            items: res.data?.items || [],
+            offset: res.data?.offset || '',
+            hasMore: Boolean(res.data?.has_more),
+          }
+        },
+        momentUnreadIds.value,
+        momentNewestLoadedId.value,
+        TOP_BAR_LAST_SEEN_STEP,
+      )
+      if (!result || !isCurrentRequest())
+        return
+
+      if (result.items.length) {
+        noteNewestLoadedMoment(result.items)
+        const entries = buildTopBarMomentItems(result.items, selectedType)
+        moments.unshift(...entries.map(entry => entry.moment))
+        linkCollaborativeMoments(entries, selectedType)
+      }
+      if (result.reachedTop)
+        hasNewerMoments.value = false
+    }
+    catch (error) {
+      console.error(error)
+    }
+    finally {
+      if (isCurrentRequest())
+        isLoadingNewerMoments.value = false
+    }
   }
 
   function extractBvid(item: any): string | null {
@@ -1031,6 +1238,10 @@ export const useTopBarStore = defineStore('topBar', () => {
       return
     if (noMoreMomentsContent.value)
       return
+    if (moments.length >= MAX_TOP_BAR_MOMENTS) {
+      noMoreMomentsContent.value = true
+      return
+    }
 
     isLoadingMoments.value = true
     const pageSize = 10
@@ -1051,8 +1262,9 @@ export const useTopBarStore = defineStore('topBar', () => {
           if (list.length === pageSize)
             livePage.value++
 
+          const remaining = Math.max(0, MAX_TOP_BAR_MOMENTS - moments.length)
           moments.push(
-            ...list.map((item: any) => ({
+            ...list.slice(0, remaining).map((item: any) => ({
               type: 'live',
               title: item.title,
               author: item.uname,
@@ -1060,9 +1272,13 @@ export const useTopBarStore = defineStore('topBar', () => {
               cover: item.pic,
               link: item.link,
               authorJumpUrl: item.link,
+              // TransitionGroup 子元素需要唯一 key
+              id_str: item.roomid ? `live-${item.roomid}` : item.link,
             }),
             ),
           )
+          if (moments.length >= MAX_TOP_BAR_MOMENTS)
+            noMoreMomentsContent.value = true
         }
       })
       .finally(() => {
@@ -1072,39 +1288,32 @@ export const useTopBarStore = defineStore('topBar', () => {
   }
 
   function isNewMoment(index: number) {
-    return index < newMomentsCount.value
+    // 取到未读 ID 时按动态 ID 判断，过滤专栏或合并联合投稿都不会让下标错位
+    if (!momentUnreadIdsLoaded.value)
+      return index < newMomentsCount.value
+    const oldestUnreadId = momentUnreadIds.value.at(-1)
+    return Boolean(oldestUnreadId) && isNotOlderDynamicId(moments[index]?.dynId, oldestUnreadId)
   }
 
-  function toggleWatchLater(aid: number) {
-    const accountId = userInfo.mid
-    if (!isCurrentAccount(accountId))
-      return
+  /** 从顶部加载且分界点尚未加载出来时，提供跳到上次看到的位置的入口 */
+  const canJumpToLastSeenMoment = computed(() => {
+    const oldestUnreadId = momentUnreadIds.value.at(-1)
+    return !hasNewerMoments.value
+      && momentUnreadIds.value.length > TOP_BAR_LAST_SEEN_MIN_UNREAD
+      && Boolean(oldestUnreadId)
+      && !moments.some(moment => isNewerDynamicId(oldestUnreadId, moment.dynId))
+  })
 
-    const isInWatchLater = addedWatchLaterList.includes(aid)
+  function jumpToLastSeenMoment(selectedType: string) {
+    return initMomentsData(selectedType, { lastSeenIds: [...momentUnreadIds.value] })
+  }
 
-    if (!isInWatchLater) {
-      api.watchlater.saveToWatchLater({
-        aid,
-        csrf: getCSRF(),
-      })
-        .then((res: any) => {
-          if (res.code === 0 && isCurrentAccount(accountId))
-            addedWatchLaterList.push(aid)
-        })
-    }
-    else {
-      api.watchlater.removeFromWatchLater({
-        aid,
-        csrf: getCSRF(),
-      })
-        .then((res: any) => {
-          if (res.code === 0 && isCurrentAccount(accountId)) {
-            const index = addedWatchLaterList.indexOf(aid)
-            if (index !== -1)
-              addedWatchLaterList.splice(index, 1)
-          }
-        })
-    }
+  /** 该条目是上次看到的位置：前一条为未读、自身已读 */
+  function isLastSeenMoment(index: number) {
+    return momentUnreadIds.value.length > 0
+      && index > 0
+      && isNewMoment(index - 1)
+      && !isNewMoment(index)
   }
 
   function handleNotificationsItemClick(item: { name: string, url: string, unreadCount: number, icon: string }) {
@@ -1150,6 +1359,8 @@ export const useTopBarStore = defineStore('topBar', () => {
     Object.assign(unReadDm, snapshot.unReadDm)
     newMomentsCount.value = snapshot.newMomentsCount
     watchLaterCount.value = snapshot.watchLaterCount
+    if (watchLaterCountChanged)
+      noteWatchLaterCount(snapshot.watchLaterCount)
     if (shouldRefreshWatchLaterList(watchLaterCountChanged, snapshot.watchLaterCount)) {
       invalidateWatchLaterList()
       void getAllWatchLaterList()
@@ -1175,7 +1386,7 @@ export const useTopBarStore = defineStore('topBar', () => {
       if (accountId !== userInfo.mid)
         return
 
-      syncSharedData({ force: true, refresh: getUnreadMessageCount }).catch((error) => {
+      syncSharedData({ refresh: getUnreadMessageCount }).catch((error) => {
         console.error('刷新已失效的未读消息状态失败:', error)
       })
     },
@@ -1299,16 +1510,13 @@ export const useTopBarStore = defineStore('topBar', () => {
   }
 
   function syncUnreadMessageState() {
-    return syncSharedData({
-      force: true,
-      refresh: getUnreadMessageCount,
-    })
+    return invalidateUnreadMessageState()
   }
 
-  function syncMomentsState(selectedType: string = 'video') {
+  function syncMomentsState() {
     return syncSharedData({
       force: true,
-      refresh: () => getTopBarNewMomentsCount(selectedType),
+      refresh: () => getTopBarNewMomentsCount(),
     })
   }
 
@@ -1362,7 +1570,7 @@ export const useTopBarStore = defineStore('topBar', () => {
   }
 
   function startUpdateTimer() {
-    if (updateTimer)
+    if (updateTimer || document.hidden)
       return
 
     const timerGeneration = updateTimerGeneration
@@ -1378,7 +1586,7 @@ export const useTopBarStore = defineStore('topBar', () => {
     let recheckInterval = LOGIN_RECHECK_INTERVAL
     const needsRecheck = () => isLogin.value && !userInfo.mid
     const scheduleNext = (delay: number) => {
-      if (timerGeneration !== updateTimerGeneration || sharedStateMessagingUnavailable)
+      if (timerGeneration !== updateTimerGeneration || sharedStateMessagingUnavailable || document.hidden)
         return
 
       updateTimer = setTimeout(() => {
@@ -1386,7 +1594,7 @@ export const useTopBarStore = defineStore('topBar', () => {
           return
 
         // 扩展重载后旧 content script 的 runtime 已失效：停止轮询，等待刷新
-        if (sharedStateMessagingUnavailable) {
+        if (sharedStateMessagingUnavailable || document.hidden) {
           updateTimer = null
           return
         }
@@ -1491,6 +1699,9 @@ export const useTopBarStore = defineStore('topBar', () => {
     watchLaterList,
     favoriteStateVersion,
     isLoadingWatchLater,
+    isAddingOpenTabsToWatchLater,
+    openTabsWatchLaterProgress,
+    openTabsWatchLaterError,
     drawerVisible,
     notificationsDrawerUrl,
     popupVisible,
@@ -1520,23 +1731,29 @@ export const useTopBarStore = defineStore('topBar', () => {
     stopUpdateTimer,
 
     moments,
-    addedWatchLaterList,
     isLoadingMoments,
     noMoreMomentsContent,
     livePage,
     momentUpdateBaseline,
     momentOffset,
+    hasNewerMoments,
+    isLoadingNewerMoments,
+    canJumpToLastSeenMoment,
 
     getTopBarMoments,
     initMomentsData,
     getMomentsData,
     isNewMoment,
-    toggleWatchLater,
+    isLastSeenMoment,
+    getNewerTopBarMoments,
+    jumpToLastSeenMoment,
 
     getWatchLaterCount,
     getAllWatchLaterList,
     loadMoreWatchLaterList,
     deleteWatchLaterItem,
+    restoreWatchLaterItem,
+    addOpenTabVideosToWatchLater,
 
     privilegeInfo,
     hasBCoinToReceive,

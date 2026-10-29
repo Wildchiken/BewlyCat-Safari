@@ -16,6 +16,14 @@ export async function getManifest() {
     version: pkg.version,
     description: pkg.description,
     homepage_url: pkg.homepage,
+    // action: {
+    //   default_icon: './assets/icon-512.png',
+    //   default_popup: './dist/popup/index.html',
+    // },
+    // options_ui: {
+    //   page: './dist/options/index.html',
+    //   open_in_tab: true,
+    // },
 
     // Setting `persistent` to true in Manifest V3 results in an error in Firefox
     // https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/background
@@ -31,38 +39,37 @@ export async function getManifest() {
     },
     permissions: [
       'storage',
-      'cookies',
-      // Safari 15+ supports declarativeNetRequest with static rules
       'declarativeNetRequest',
-      ...(!isFirefox && !isSafari ? ['scripting'] : []),
-      ...(isFirefox || isSafari
+      'cookies',
+      ...(!isSafari ? ['scripting'] : []),
+      ...(isFirefox || isSafari)
         ? ['webRequest', 'webRequestBlocking']
-        : []),
+        : [],
     ],
     host_permissions: [
       '*://*.bilibili.com/*',
       '*://*.hdslb.com/*',
     ],
+    // IframePage and IframeDrawer embed supported Bilibili pages and rely on the
+    // content scripts for styling, layout synchronization, and interactions.
+    // Blank frames are not supported pages, so match_about_blank is intentionally omitted.
     content_scripts: [
       {
         matches: [...CONTENT_SCRIPT_MATCHES],
         exclude_matches: [...CONTENT_SCRIPT_EXCLUDE_MATCHES],
-        js: ['./dist/contentScripts/index.global.js'],
+        js: ['./dist/contentScripts/pageLoading.js', './dist/contentScripts/index.global.js'],
         css: ['./dist/contentScripts/style.css'],
         run_at: 'document_start',
-        match_about_blank: true,
         all_frames: true,
       },
-      // Safari does not support `world: 'MAIN'` in content script manifest entries.
-      // The inject script is instead injected dynamically from the content script (index.ts)
+      // Safari 不支持 `world: 'MAIN'`，inject 脚本改由 content script 注入（见 contentScripts/index.ts）
       ...(isSafari
         ? []
         : [{
             matches: [...CONTENT_SCRIPT_MATCHES],
             exclude_matches: [...CONTENT_SCRIPT_EXCLUDE_MATCHES],
             js: ['./dist/contentScripts/inject.global.js'],
-            run_at: 'document_start',
-            match_about_blank: true,
+            run_at: 'document_start' as const,
             all_frames: true,
             world: 'MAIN' as const,
           }]),
@@ -70,11 +77,13 @@ export async function getManifest() {
     web_accessible_resources: [
       {
         resources: [
-          'dist/contentScripts/style.css',
-          'dist/contentScripts/inject.global.js',
           'assets/*',
+          'dist/contentScripts/listenVideoControl.js',
+          'dist/contentScripts/hlsPlayer.js',
+          'dist/contentScripts/flvPlayer.js',
+          ...(isSafari ? ['dist/contentScripts/inject.global.js'] : []),
         ],
-        matches: ['<all_urls>'],
+        matches: [...CONTENT_SCRIPT_MATCHES],
       },
     ],
     content_security_policy: isFirefox
@@ -87,7 +96,7 @@ export async function getManifest() {
             ? `script-src 'self' http://localhost:${port}; object-src 'self' http://localhost:${port}`
             : 'script-src \'self\'; object-src \'self\'',
         },
-    ...(isFirefox
+    ...isFirefox
       ? {}
       : {
           declarative_net_request: {
@@ -99,7 +108,7 @@ export async function getManifest() {
               },
             ],
           },
-        }),
+        },
   }
 
   if (isDev)
@@ -109,14 +118,6 @@ export async function getManifest() {
     manifest.browser_specific_settings = {
       gecko: {
         id: 'addon@celeus.cn',
-      },
-    }
-  }
-
-  if (isSafari) {
-    manifest.browser_specific_settings = {
-      safari: {
-        // Use the development team ID from Xcode when distributing
       },
     }
   }

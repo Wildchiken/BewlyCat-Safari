@@ -1,20 +1,23 @@
 <script setup lang="ts">
-import { onKeyStroke, useMouseInElement } from '@vueuse/core'
+import { onKeyStroke } from '@vueuse/core'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import { useBewlyApp } from '~/composables/useAppProvider'
 import { useDark } from '~/composables/useDark'
 import { useLayoutEditMode } from '~/composables/useLayoutEditMode'
-import { OVERLAY_SCROLL_BAR_SCROLL, TOP_BAR_SCROLL_VISIBILITY_CHANGE, TOP_BAR_VISIBILITY_CHANGE } from '~/constants/globalEvents'
+import { BEWLY_IFRAME_DRAWER_HOST_CLASS, OVERLAY_SCROLL_BAR_SCROLL, TOP_BAR_SCROLL_VISIBILITY_CHANGE, TOP_BAR_VISIBILITY_CHANGE } from '~/constants/globalEvents'
 import { VideoPageTopBarConfig } from '~/enums/appEnums'
 import { settings } from '~/logic'
 import { useTopBarStore } from '~/stores/topBarStore'
 import { isBewlyWidescreenActive } from '~/utils/bewlyWidescreen'
+import { findLeafActiveElement } from '~/utils/element'
 import { isHomePage, isUserSpacePage, isVideoOrBangumiPage } from '~/utils/main'
 import emitter from '~/utils/mitt'
+import { isComponentVisible } from '~/utils/topBarBadge'
 
 import NotificationsDrawer from './components/NotificationsDrawer.vue'
 import TopBarHeader from './components/TopBarHeader.vue'
+import TopBarModeSwitcher from './components/TopBarModeSwitcher.vue'
 import { useTopBarInteraction } from './composables/useTopBarInteraction'
 
 const { reachTop } = useBewlyApp()
@@ -34,10 +37,22 @@ const hideTopBar = ref<boolean>(false)
 const desiredTopBarVisible = ref(true)
 const forceHideTopBar = ref(false)
 const bewlyWidescreenActive = ref(false)
-const headerTarget = ref(null)
-const topAreaTarget = ref(null)
-const { isOutside: isOutsideTopBar } = useMouseInElement(headerTarget)
-const { isOutside: isOutsideTopArea } = useMouseInElement(topAreaTarget)
+const headerTarget = ref<HTMLElement | null>(null)
+const topAreaTarget = ref<HTMLElement | null>(null)
+// Pointer boundary events instead of useMouseInElement: that composable re-read
+// the header's rect whenever its style or class changed, which happens on every
+// scroll frame, forcing a synchronous layout each time.
+const isOutsideTopBar = ref(true)
+const isOutsideTopArea = ref(true)
+// v-if removes these elements without a pointerleave.
+watch(headerTarget, (element) => {
+  if (!element)
+    isOutsideTopBar.value = true
+})
+watch(topAreaTarget, (element) => {
+  if (!element)
+    isOutsideTopArea.value = true
+})
 
 // 当前URL
 const currentUrl = ref(window.location.href)
@@ -55,6 +70,17 @@ function checkUrlChange() {
 let hideTimer: number | null = null
 let urlChangeCheckQueued = false
 let topBarUnmounted = false
+// 后台恢复的标签页推迟到首次可见时再初始化，避免多个标签页同时挤占后台请求。
+let initDataDeferred = false
+
+async function initTopBarData() {
+  try {
+    await topBarStore.initData()
+  }
+  catch (error) {
+    console.error('初始化顶栏数据失败:', error)
+  }
+}
 
 function scheduleUrlChangeCheck() {
   if (urlChangeCheckQueued || topBarUnmounted)
@@ -72,6 +98,13 @@ const hasActivePopup = computed(() => {
   return Object.values(topBarStore.popupVisible).some(visible => visible)
 })
 
+const ORIGINAL_VIDEO_TOP_BAR_CONTROLLED_CLASS = 'bewly-original-video-top-bar-controlled'
+const ORIGINAL_VIDEO_TOP_BAR_HIDDEN_CLASS = 'bewly-original-video-top-bar-hidden'
+
+function isIframeDrawerHost() {
+  return document.documentElement.classList.contains(BEWLY_IFRAME_DRAWER_HOST_CLASS)
+}
+
 function applyTopBarVisibility() {
   const shouldShow = !bewlyWidescreenActive.value
     && desiredTopBarVisible.value
@@ -82,15 +115,39 @@ function applyTopBarVisibility() {
 
   hideTopBar.value = !shouldShow
   topBarStore.setTopBarVisible(shouldShow)
+  syncOriginalVideoTopBarVisibility(shouldShow)
   emitter.emit(TOP_BAR_VISIBILITY_CHANGE, shouldShow)
 }
+
+function syncOriginalVideoTopBarVisibility(visible: boolean) {
+  const shouldControl = !isIframeDrawerHost()
+    && isVideoOrBangumiPage()
+    && settings.value.enableTopBar
+    && settings.value.useOriginalBilibiliTopBar
+    && settings.value.videoPageTopBarConfig !== VideoPageTopBarConfig.ShowOnMouse
+
+  document.documentElement.classList.toggle(ORIGINAL_VIDEO_TOP_BAR_CONTROLLED_CLASS, shouldControl)
+  document.documentElement.classList.toggle(ORIGINAL_VIDEO_TOP_BAR_HIDDEN_CLASS, shouldControl && !visible)
+}
+
+// 鼠标显示只控制插件顶栏；iframe 抽屉宿主的顶栏属于原页面，沿用其他页面配置。
+const isShowOnMouseActive = computed(() => {
+  void currentUrl.value
+  if (settings.value.useOriginalBilibiliTopBar)
+    return false
+
+  const config = isVideoOrBangumiPage() && !isIframeDrawerHost()
+    ? settings.value.videoPageTopBarConfig
+    : settings.value.otherPageTopBarConfig
+  return config === VideoPageTopBarConfig.ShowOnMouse
+})
 
 // 处理顶栏显示/隐藏逻辑的函数
 function handleTopBarVisibility() {
   if (bewlyWidescreenActive.value)
     return
 
-  if (isVideoOrBangumiPage() && settings.value.videoPageTopBarConfig === VideoPageTopBarConfig.ShowOnMouse) {
+  if (isShowOnMouseActive.value) {
     // 清除之前的计时器
     if (hideTimer) {
       clearTimeout(hideTimer)
@@ -128,6 +185,16 @@ watch(hasActivePopup, () => {
 watch(forceHideTopBar, () => {
   applyTopBarVisibility()
 })
+
+watch(
+  [
+    () => settings.value.enableTopBar,
+    () => settings.value.useOriginalBilibiliTopBar,
+    () => settings.value.videoPageTopBarConfig,
+    () => settings.value.otherPageTopBarConfig,
+  ],
+  () => setupScrollListeners(),
+)
 
 // 滚动处理
 const scrollTop = ref<number>(0)
@@ -214,6 +281,12 @@ function handleScroll(arg?: number | Event): void {
   }
   // 处理其他页面的自动隐藏逻辑
   else {
+    // 鼠标显示：滚动监听仅用于空间页导航栏冲突检测
+    if (isShowOnMouseActive.value) {
+      finishScrollHandling()
+      return
+    }
+
     if (scrollTop.value === 0) {
       setTopBarVisibleFromScroll(true, scrollDelta)
       finishScrollHandling()
@@ -221,7 +294,7 @@ function handleScroll(arg?: number | Event): void {
     }
 
     // 在用户首页强制开启滚动隐藏，无论设置如何
-    if (isUserSpacePage() || settings.value.autoHideTopBar) {
+    if (isUserSpacePage() || settings.value.otherPageTopBarConfig === VideoPageTopBarConfig.ShowOnScroll) {
       if (!hideTopBar.value && scrollDelta < 0) {
         topBarVisibilityAnchorScrollTop.value = scrollTop.value
       }
@@ -259,22 +332,29 @@ function emitTopBarScrollVisibilityChange(visible: boolean, scrollDelta: number)
 }
 
 function setupScrollListeners() {
-  // 根据视频页面配置设置初始显示状态
-  if (isVideoOrBangumiPage()) {
-    const config = settings.value.videoPageTopBarConfig
-    if (config === VideoPageTopBarConfig.AlwaysHide || config === VideoPageTopBarConfig.ShowOnMouse) {
-      toggleTopBarVisible(false)
-    }
-    else {
-      toggleTopBarVisible(true)
-    }
+  // iframe 抽屉会用视频 URL 临时替换父页面地址栏。父页面顶栏仍属于原页面，
+  // 不应套用视频页的自动隐藏配置；关闭抽屉后 URL 事件会恢复常规监听。
+  if (isIframeDrawerHost()) {
+    applyTopBarVisibility()
+    cleanupScrollListeners()
+    return
   }
-  else {
-    toggleTopBarVisible(true)
+
+  // 切换页面或设置后丢弃上一种模式遗留的延迟隐藏
+  if (hideTimer) {
+    clearTimeout(hideTimer)
+    hideTimer = null
   }
+
+  // 根据页面配置设置初始显示状态
+  toggleTopBarVisible(!isShowOnMouseActive.value
+    && !(isVideoOrBangumiPage() && settings.value.videoPageTopBarConfig === VideoPageTopBarConfig.AlwaysHide))
 
   // 清理之前的监听器
   cleanupScrollListeners()
+  // 设置切换后从当前位置重新累计滚动距离，避免沿用上一次隐藏的锚点。
+  oldScrollTop.value = scrollTop.value
+  topBarVisibilityAnchorScrollTop.value = scrollTop.value
 
   // 在视频页面根据配置决定是否设置滚动监听
   if (isVideoOrBangumiPage()) {
@@ -520,16 +600,11 @@ function handleClickOutsidePopup(event: MouseEvent) {
   if (!hasActivePopup.value)
     return
 
-  const target = event.target as HTMLElement
-
-  // 检查点击是否在顶栏项目按钮上（这些按钮会自己处理切换逻辑）
-  const isTopBarItemButton = target.closest('.logo, .right-side-item, .home-button')
-  if (isTopBarItemButton)
-    return
-
-  // 检查点击是否在弹窗内
-  const isInPopup = target.closest('.bew-popover')
-  if (isInPopup)
+  // document receives the Shadow Host as event.target. Inspect the original
+  // path so opening a panel and interacting inside it never count as outside.
+  const isInside = event.composedPath().some(target => target instanceof Element
+    && target.matches('.logo, .right-side-item, .home-button, .bew-popover, [data-top-bar-panel-anchor]'))
+  if (isInside)
     return
 
   // 点击在弹窗外部，关闭所有弹窗
@@ -540,12 +615,10 @@ function handleClickOutsidePopup(event: MouseEvent) {
 onMounted(() => {
   nextTick(async () => {
     // 初始化数据和更新定时器
-    try {
-      await topBarStore.initData()
-    }
-    catch (error) {
-      console.error('初始化顶栏数据失败:', error)
-    }
+    if (document.hidden)
+      initDataDeferred = true
+    else
+      await initTopBarData()
     if (topBarUnmounted)
       return
 
@@ -579,9 +652,25 @@ onMounted(() => {
 
 function handleVisibilityChange() {
   if (!document.hidden) {
-    topBarStore.reconcileLocalLoginState()
+    if (initDataDeferred) {
+      initDataDeferred = false
+      void initTopBarData().then(() => {
+        if (!topBarUnmounted && !document.hidden)
+          topBarStore.startUpdateTimer()
+      })
+    }
+    else {
+      topBarStore.reconcileLocalLoginState()
+      topBarStore.startUpdateTimer()
+      void topBarStore.syncSharedData().catch((error) => {
+        console.error('同步顶栏共享状态失败:', error)
+      })
+    }
     scheduleUrlChangeCheck()
     scheduleConflictingHeaderVisibilityUpdate()
+  }
+  else {
+    topBarStore.stopUpdateTimer()
   }
 }
 
@@ -612,15 +701,28 @@ onUnmounted(() => {
   window.removeEventListener('popstate', scheduleUrlChangeCheck)
   window.removeEventListener('hashchange', scheduleUrlChangeCheck)
   window.removeEventListener('pageshow', scheduleUrlChangeCheck)
+  document.documentElement.classList.remove(
+    ORIGINAL_VIDEO_TOP_BAR_CONTROLLED_CLASS,
+    ORIGINAL_VIDEO_TOP_BAR_HIDDEN_CLASS,
+  )
 })
 
 // 快捷键
-onKeyStroke('/', () => {
+onKeyStroke('/', (event: KeyboardEvent) => {
+  const target = event.target as HTMLElement | null
+  if (target && (['INPUT', 'TEXTAREA'].includes(target.tagName) || target.isContentEditable))
+    return
+
+  const activeElement = findLeafActiveElement(document) as HTMLElement | undefined
+  if (activeElement && (['INPUT', 'TEXTAREA'].includes(activeElement.tagName) || activeElement.isContentEditable))
+    return
+
+  event.preventDefault()
   toggleTopBarVisible(true)
 })
 
 onKeyStroke('Escape', (event: KeyboardEvent) => {
-  if (!settings.value.touchScreenOptimization || !hasActivePopup.value)
+  if (!hasActivePopup.value)
     return
 
   event.preventDefault()
@@ -631,29 +733,35 @@ defineExpose({
   toggleTopBarVisible,
   handleScroll,
 })
-
-// 导出枚举供模板使用
-const VideoPageTopBarConfigEnum = VideoPageTopBarConfig
 </script>
 
 <template>
   <div class="top-bar-container">
     <!-- 顶部监听区域 -->
     <div
-      v-if="!bewlyWidescreenActive && isVideoOrBangumiPage() && settings.videoPageTopBarConfig === VideoPageTopBarConfigEnum.ShowOnMouse"
+      v-if="!bewlyWidescreenActive && isShowOnMouseActive"
       ref="topAreaTarget"
       class="top-area-listener"
+      @pointerenter="isOutsideTopArea = false"
+      @pointerleave="isOutsideTopArea = true"
     />
     <Transition name="top-bar">
       <header
         v-if="topBarStore.showTopBar || isLayoutEditing"
         ref="headerTarget"
         class="top-bar"
+        data-layout-edit-target="topbar-component"
+        data-layout-edit-direct
+        data-layout-settings-menu="BewlyComponents"
+        data-layout-settings-page="topbar"
+        data-layout-settings-title-key="settings.topbar_visibility"
         w="full"
         :class="{
           'hide': hideTopBar && !isLayoutEditing,
           'force-white-icon': forceWhiteIcon,
         }"
+        @pointerenter="isOutsideTopBar = false"
+        @pointerleave="isOutsideTopBar = true"
       >
         <TopBarHeader
           v-if="!isLayoutEditing || !settings.useOriginalBilibiliTopBar"
@@ -671,6 +779,13 @@ const VideoPageTopBarConfigEnum = VideoPageTopBarConfig
         </KeepAlive>
       </header>
     </Transition>
+
+    <TopBarModeSwitcher
+      v-if="settings.enableTopBar
+        && settings.useOriginalBilibiliTopBar
+        && isComponentVisible('topBarSwitcher')"
+      native
+    />
   </div>
 </template>
 
@@ -688,6 +803,7 @@ const VideoPageTopBarConfigEnum = VideoPageTopBarConfig
   right: 0;
   z-index: 999;
   position: fixed;
+  min-height: var(--bew-top-bar-height);
   transition:
     opacity var(--bew-duration-moderate) var(--bew-ease-standard),
     transform var(--bew-duration-moderate) var(--bew-ease-standard);

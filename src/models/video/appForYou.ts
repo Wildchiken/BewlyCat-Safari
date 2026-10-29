@@ -42,8 +42,8 @@ export interface Item {
   card_type: CardType
   card_goto: CardGoto
   args: Args
-  idx: number
-  track_id: TrackID
+  idx?: number
+  track_id: string
   hash?: string
   banner_item?: BannerItem[]
   goto?: CardGoto
@@ -62,7 +62,10 @@ export interface Item {
   cover_left_text_1?: string
   cover_left_text_2?: string
   desc?: string
-  rcmd_reason?: RcmdReason
+  /** TV / iPad 接口为对象，HD 接口为字符串（如「已关注」） */
+  rcmd_reason?: RcmdReason | string
+  /** HD 接口的 UP 主名称按钮，番剧等卡片没有 args.up_name 时使用 */
+  desc_button?: DescButton
   can_play?: number
   cover_right_text?: string
   cover_left_icon_1?: number
@@ -73,6 +76,23 @@ export interface Item {
   bottom_rcmd_reason?: string
   official_icon?: number
   bottom_rcmd_reason_style?: RcmdReasonStyle
+  /** 单列接口：desc 拆分后的作者与附加信息，extra 如「 · 10月5日」「等2人联合创作 · 3天前」 */
+  multiply_desc?: MultiplyDesc
+  /** 单列接口：点赞按钮，count 为点赞数 */
+  like_button?: LikeButton
+  /** 单列接口：已关注该 UP 主（没有「已关注」推荐理由） */
+  is_atten?: boolean
+}
+
+export interface MultiplyDesc {
+  author_name?: string
+  extra?: string
+}
+
+export interface LikeButton {
+  aid?: number
+  count?: number
+  show_count?: boolean
 }
 
 export interface RcmdReason {
@@ -126,7 +146,7 @@ export interface Extra {
   enable_store_direct_launch: number
   external_link_warning: string
   feedback_panel_style: number
-  from_track_id: TrackID
+  from_track_id: string
   h5_pre_load_url: string
   hot_activity_id: number
   landingpage_download_style: number
@@ -283,16 +303,21 @@ export interface QualityInfo {
   user_faces: string[]
 }
 
-export enum TrackID {
-  All49RouterPegasus13486736F5B8C7B6W6Blj1701596425847856 = 'all_49.router-pegasus-1348673-6f5b8c7b6-w6blj.1701596425847.856',
-}
-
 export interface Args {
   up_id?: number
   up_name?: string
   rid?: number
   rname?: string
+  tid?: number
+  tname?: string
   aid?: number
+}
+
+export interface DescButton {
+  text?: string
+  uri?: string
+  event?: string
+  type?: number
 }
 
 export interface Avatar {
@@ -341,6 +366,7 @@ export interface RcmdReasonStyle {
 
 export enum CardGoto {
   AV = 'av',
+  AdAV = 'ad_av',
   AdWebS = 'ad_web_s',
   Banner = 'banner',
   Bangumi = 'bangumi',
@@ -393,6 +419,10 @@ export interface ThreePoint {
 
 export interface DislikeReason {
   id: number
+  // 同类原因（如多个「频道:xxx」）共用 id，靠下列字段区分具体对象
+  mid?: number
+  rid?: number
+  tag_id?: number
   name: string
   toast: ToastEnum
 }

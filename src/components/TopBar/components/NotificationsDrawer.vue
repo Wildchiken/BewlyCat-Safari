@@ -28,6 +28,17 @@ const isIframeDisplayReady = ref(false)
 const delayCloseTimer = ref<NodeJS.Timeout | null>(null)
 const revealIframeTimer = ref<NodeJS.Timeout | null>(null)
 const isPageScrollLocked = ref(false)
+const isEscPressed = ref<boolean>(false)
+const escPressedTimer = ref<NodeJS.Timeout | null>(null)
+const escHintTimer = ref<NodeJS.Timeout | null>(null)
+const openTimer = ref<NodeJS.Timeout | null>(null)
+const showEscHint = ref<boolean>(false)
+let darkModeSyncTimers: ReturnType<typeof setTimeout>[] = []
+
+function clearDarkModeSyncTimers() {
+  darkModeSyncTimers.forEach(clearTimeout)
+  darkModeSyncTimers = []
+}
 
 // 计算属性：只有在显示iframe时才设置src，避免隐藏时提前加载
 const src = computed(() => showIframe.value ? currentUrl.value : undefined)
@@ -73,6 +84,34 @@ function handleIframeLoad() {
     return
 
   isIframeLoaded.value = true
+  // 完整导航后 loaded 仍为 true，每次 load 都需要同步新文档的主题。
+  clearDarkModeSyncTimers()
+  syncIframeDarkModeState()
+  darkModeSyncTimers = [120, 320].map(delay => setTimeout(syncIframeDarkModeState, delay))
+  scheduleRevealIframe()
+}
+
+function handleDrawerCloseRequestMessage(event: MessageEvent) {
+  const iframe = iframeRef.value
+  if (!show.value || !iframe?.contentWindow || event.source !== iframe.contentWindow)
+    return
+
+  const iframeSrc = iframe.getAttribute('src')
+  if (!iframeSrc || iframeSrc === 'about:blank')
+    return
+
+  try {
+    if (event.origin !== new URL(iframeSrc, window.location.href).origin)
+      return
+  }
+  catch {
+    return
+  }
+
+  if (event.data?.type !== 'BEWLY_DRAWER_CLOSE_REQUEST' || event.data?.source !== 'iframe')
+    return
+
+  requestClose()
 }
 
 // 监听黑暗模式变化
@@ -85,75 +124,39 @@ watch(() => settings.value.darkModeBaseColor, () => {
   syncIframeDarkModeState()
 })
 
-// 监听iframe加载状态，加载完成后发送初始的黑暗模式状态
-watch(() => isIframeLoaded.value, (newValue) => {
-  if (!newValue)
-    return
-
-  // 发送多次深色模式同步消息，减少 iframe 页面初始亮色闪烁
-  syncIframeDarkModeState()
-  setTimeout(syncIframeDarkModeState, 120)
-  setTimeout(syncIframeDarkModeState, 320)
-  scheduleRevealIframe()
-})
-
-watch(() => showIframe.value, (newValue) => {
-  if (newValue)
-    scheduleRevealIframe()
-})
-
-onMounted(() => {
-  handleOpen()
-})
-
-onActivated(() => {
-  handleOpen()
-})
-
-const beforeUrl = ref<string>('')
-
 function handleOpen() {
-  console.log('[NotificationsDrawer] handleOpen called')
   show.value = true
   isIframeLoaded.value = false // 重置加载状态
   isIframeDisplayReady.value = false // 重置显示状态
   clearRevealIframeTimer()
   setActiveDrawer(DrawerType.NotificationsDrawer) // 设置为当前活跃抽屉
-  console.log('[NotificationsDrawer] show.value:', show.value, 'activeDrawer:', activeDrawer.value)
   if (!isPageScrollLocked.value) {
     lockPageScroll()
     isPageScrollLocked.value = true
   }
 
-  if (beforeUrl.value !== props.url) {
+  if (currentUrl.value !== props.url)
     currentUrl.value = props.url
-    beforeUrl.value = props.url
-  }
   // 延迟加载iframe，确保抽屉动画完成后再开始加载内容
-  setTimeout(() => {
+  if (openTimer.value)
+    clearTimeout(openTimer.value)
+  openTimer.value = setTimeout(() => {
+    openTimer.value = null
     showIframe.value = true
     nextTick(() => {
       // 聚焦到抽屉容器而不是iframe，以便捕获键盘事件
-      console.log('[NotificationsDrawer] Focusing drawer container')
       drawerRef.value?.focus()
     })
   }, 350) // 等待抽屉滑入动画完成(300ms)后再显示iframe，避免动画冲突
 }
 
-onBeforeUnmount(() => {
-  if (isPageScrollLocked.value) {
-    unlockPageScroll()
-    isPageScrollLocked.value = false
-  }
-  releaseIframeResources()
-})
-
-async function handleClose() {
-  console.log('[NotificationsDrawer] handleClose called')
+function handleClose() {
   if (delayCloseTimer.value) {
     clearTimeout(delayCloseTimer.value)
   }
-  clearRevealIframeTimer()
+  clearLifecycleTimers()
+  isEscPressed.value = false
+  showEscHint.value = false
   if (isPageScrollLocked.value) {
     unlockPageScroll()
     isPageScrollLocked.value = false
@@ -163,10 +166,25 @@ async function handleClose() {
   isIframeLoaded.value = false // 重置加载状态
   isIframeDisplayReady.value = false // 重置显示状态
   setActiveDrawer(DrawerType.None) // 清除活跃抽屉状态
-  console.log('[NotificationsDrawer] show.value:', show.value, 'activeDrawer:', activeDrawer.value)
   delayCloseTimer.value = setTimeout(() => {
     emit('close')
   }, 300)
+}
+
+// 统一的关闭请求入口：ESC 与 iframe 内请求共用。
+// 未开启“直接关闭”时，首次请求只进入待确认态，1.3s 内再次请求才真正关闭。
+// handleClose 内部会清理 escPressedTimer，故进入关闭分支时无需手动清理。
+function requestClose() {
+  if (settings.value.closeDrawerWithoutPressingEscAgain || isEscPressed.value) {
+    handleClose()
+    return
+  }
+  isEscPressed.value = true
+  if (escPressedTimer.value)
+    clearTimeout(escPressedTimer.value)
+  escPressedTimer.value = setTimeout(() => {
+    isEscPressed.value = false
+  }, 1300)
 }
 
 async function releaseIframeResources() {
@@ -202,169 +220,143 @@ function handleOpenInNewTab() {
   }
 }
 
-const isEscPressed = ref<boolean>(false)
-const escPressedTimer = ref<NodeJS.Timeout | null>(null)
-const disableEscPress = ref<boolean>(false)
-const showEscHint = ref<boolean>(false)
-
 /**
  * Listen to Escape key using native event listener
  */
 function handleKeydown(e: KeyboardEvent) {
-  console.log('[NotificationsDrawer] keydown event:', e.key, e.code, 'activeDrawer:', activeDrawer.value)
-
   if (e.key !== 'Escape' && e.code !== 'Escape')
     return
-
-  console.log('[NotificationsDrawer] ESC key pressed!')
-  console.log('[NotificationsDrawer] show.value:', show.value)
-  console.log('[NotificationsDrawer] activeDrawer.value:', activeDrawer.value)
-  console.log('[NotificationsDrawer] DrawerType.NotificationsDrawer:', DrawerType.NotificationsDrawer)
-  console.log('[NotificationsDrawer] Match:', activeDrawer.value === DrawerType.NotificationsDrawer)
+  if (e.repeat || e.isComposing)
+    return
 
   // Only handle when this drawer is the active drawer
-  if (activeDrawer.value !== DrawerType.NotificationsDrawer) {
-    console.log('[NotificationsDrawer] Not active drawer, ignoring ESC')
+  if (activeDrawer.value !== DrawerType.NotificationsDrawer)
     return
-  }
 
-  console.log('[NotificationsDrawer] Processing ESC key')
-  e.preventDefault()
-  e.stopPropagation()
+  const hadEscapePriorityState = !!(document.fullscreenElement
+    || (document as Document & { webkitFullscreenElement?: Element | null }).webkitFullscreenElement)
 
-  if (settings.value.closeDrawerWithoutPressingEscAgain) {
-    console.log('[NotificationsDrawer] closeDrawerWithoutPressingEscAgain = true, closing immediately')
-    clearTimeout(escPressedTimer.value!)
-    handleClose()
-    return
-  }
-  console.log('[NotificationsDrawer] disableEscPress:', disableEscPress.value)
-  console.log('[NotificationsDrawer] isEscPressed:', isEscPressed.value)
-  if (disableEscPress.value)
-    return
-  if (isEscPressed.value) {
-    console.log('[NotificationsDrawer] ESC pressed twice, closing')
-    handleClose()
-  }
-  else {
-    console.log('[NotificationsDrawer] First ESC press, waiting for second press')
-    isEscPressed.value = true
-    if (escPressedTimer.value) {
-      clearTimeout(escPressedTimer.value)
+  window.setTimeout(() => {
+    if (hadEscapePriorityState
+      || e.defaultPrevented
+      || e.cancelBubble
+      || activeDrawer.value !== DrawerType.NotificationsDrawer) {
+      return
     }
-    escPressedTimer.value = setTimeout(() => {
-      isEscPressed.value = false
-    }, 1300)
+
+    requestClose()
+  }, 0)
+}
+
+function showEscHintTemporarily() {
+  showEscHint.value = true
+  if (escHintTimer.value)
+    clearTimeout(escHintTimer.value)
+  escHintTimer.value = setTimeout(() => {
+    showEscHint.value = false
+    escHintTimer.value = null
+  }, 3000)
+}
+
+function handleIframeFocusin(e: FocusEvent) {
+  if (show.value && iframeRef.value && e.target === iframeRef.value)
+    showEscHintTemporarily()
+}
+
+function handleDocumentClick(e: MouseEvent) {
+  if (show.value && iframeRef.value?.contains(e.target as Node))
+    showEscHintTemporarily()
+}
+
+function handleDrawerMousedown(e: MouseEvent) {
+  if (!show.value || !drawerRef.value || !iframeRef.value)
+    return
+
+  const isClickInDrawer = drawerRef.value.contains(e.target as Node)
+  const isClickInIframe = iframeRef.value.contains(e.target as Node)
+
+  if (isClickInDrawer && !isClickInIframe) {
+    e.preventDefault()
+    showEscHint.value = false
+    nextTick(() => drawerRef.value?.focus())
+  }
+}
+
+let globalListenersRegistered = false
+let drawerActive = false
+
+function registerGlobalListeners() {
+  if (globalListenersRegistered)
+    return
+  globalListenersRegistered = true
+  window.addEventListener('keydown', handleKeydown, true) // use capture phase
+  window.addEventListener('message', handleDrawerCloseRequestMessage)
+  document.addEventListener('focusin', handleIframeFocusin, true)
+  document.addEventListener('click', handleDocumentClick, true)
+  document.addEventListener('mousedown', handleDrawerMousedown, true)
+}
+
+function removeGlobalListeners() {
+  if (!globalListenersRegistered)
+    return
+  globalListenersRegistered = false
+  window.removeEventListener('keydown', handleKeydown, true)
+  window.removeEventListener('message', handleDrawerCloseRequestMessage)
+  document.removeEventListener('focusin', handleIframeFocusin, true)
+  document.removeEventListener('click', handleDocumentClick, true)
+  document.removeEventListener('mousedown', handleDrawerMousedown, true)
+}
+
+function clearLifecycleTimers() {
+  clearDarkModeSyncTimers()
+  clearRevealIframeTimer()
+  if (openTimer.value) {
+    clearTimeout(openTimer.value)
+    openTimer.value = null
+  }
+  if (escHintTimer.value) {
+    clearTimeout(escHintTimer.value)
+    escHintTimer.value = null
+  }
+  if (escPressedTimer.value) {
+    clearTimeout(escPressedTimer.value)
+    escPressedTimer.value = null
   }
 }
 
 onMounted(() => {
-  console.log('[NotificationsDrawer] onMounted - registering keydown listener')
-  window.addEventListener('keydown', handleKeydown, true) // use capture phase
-  document.addEventListener('keydown', handleKeydown, true) // also listen on document
-
-  // 监听来自iframe的关闭请求
-  window.addEventListener('message', (event) => {
-    if (event.data?.type === 'BEWLY_DRAWER_CLOSE_REQUEST' && event.data?.source === 'iframe') {
-      console.log('[NotificationsDrawer] Received close request from iframe')
-
-      // 根据设置决定是立即关闭还是需要二次确认
-      if (settings.value.closeDrawerWithoutPressingEscAgain) {
-        console.log('[NotificationsDrawer] Closing drawer immediately (from iframe)')
-        handleClose()
-      }
-      else {
-        // 模拟ESC按下逻辑
-        if (isEscPressed.value) {
-          console.log('[NotificationsDrawer] Second ESC from iframe, closing')
-          handleClose()
-        }
-        else {
-          console.log('[NotificationsDrawer] First ESC from iframe, waiting for second press')
-          isEscPressed.value = true
-          if (escPressedTimer.value) {
-            clearTimeout(escPressedTimer.value)
-          }
-          escPressedTimer.value = setTimeout(() => {
-            isEscPressed.value = false
-          }, 1300)
-        }
-      }
-    }
-  })
-
-  // Monitor focus changes - if iframe gets focus, show hint
-  document.addEventListener('focusin', (e) => {
-    if (show.value && iframeRef.value && e.target === iframeRef.value) {
-      console.log('[NotificationsDrawer] iframe got focus, showing ESC hint')
-      showEscHint.value = true
-      // Auto hide hint after 3 seconds
-      setTimeout(() => {
-        showEscHint.value = false
-      }, 3000)
-    }
-  }, true)
-
-  // Monitor clicks on iframe
-  document.addEventListener('click', (e) => {
-    if (show.value && iframeRef.value?.contains(e.target as Node)) {
-      console.log('[NotificationsDrawer] iframe clicked, showing ESC hint')
-      showEscHint.value = true
-      setTimeout(() => {
-        showEscHint.value = false
-      }, 3000)
-    }
-  }, true)
-
-  // Monitor clicks/mousedown on drawer area (outside iframe) to refocus
-  document.addEventListener('mousedown', (e) => {
-    if (!show.value || !drawerRef.value || !iframeRef.value)
-      return
-
-    const isClickInDrawer = drawerRef.value.contains(e.target as Node)
-    const isClickInIframe = iframeRef.value.contains(e.target as Node)
-
-    // If clicked inside drawer but not in iframe, refocus drawer
-    if (isClickInDrawer && !isClickInIframe) {
-      console.log('[NotificationsDrawer] Click outside iframe, refocusing drawer')
-      e.preventDefault()
-      showEscHint.value = false
-      nextTick(() => {
-        drawerRef.value?.focus()
-        console.log('[NotificationsDrawer] Drawer refocused, activeElement:', document.activeElement)
-      })
-    }
-  }, true)
-
+  drawerActive = true
+  registerGlobalListeners()
   handleOpen()
 })
 
 onActivated(() => {
-  console.log('[NotificationsDrawer] onActivated - re-registering keydown listener')
-  window.removeEventListener('keydown', handleKeydown, true)
-  document.removeEventListener('keydown', handleKeydown, true)
-  window.addEventListener('keydown', handleKeydown, true)
-  document.addEventListener('keydown', handleKeydown, true)
+  if (drawerActive)
+    return
+  drawerActive = true
+  registerGlobalListeners()
   handleOpen()
 })
 
 onBeforeUnmount(() => {
-  console.log('[NotificationsDrawer] onBeforeUnmount - removing keydown listener')
-  window.removeEventListener('keydown', handleKeydown, true)
-  document.removeEventListener('keydown', handleKeydown, true)
-  clearRevealIframeTimer()
+  drawerActive = false
+  removeGlobalListeners()
+  clearLifecycleTimers()
+  if (delayCloseTimer.value) {
+    clearTimeout(delayCloseTimer.value)
+    delayCloseTimer.value = null
+  }
   if (isPageScrollLocked.value) {
     unlockPageScroll()
     isPageScrollLocked.value = false
   }
-  releaseIframeResources()
+  void releaseIframeResources()
 })
 
 onDeactivated(() => {
-  console.log('[NotificationsDrawer] onDeactivated - removing keydown listener')
-  window.removeEventListener('keydown', handleKeydown, true)
-  document.removeEventListener('keydown', handleKeydown, true)
-  clearRevealIframeTimer()
+  drawerActive = false
+  removeGlobalListeners()
+  clearLifecycleTimers()
   if (isPageScrollLocked.value) {
     unlockPageScroll()
     isPageScrollLocked.value = false
@@ -373,13 +365,9 @@ onDeactivated(() => {
 
 // 辅助方法：处理点击/鼠标按下，隐藏提示并聚焦抽屉
 function handleFocusDrawer(e?: Event) {
-  console.log('[NotificationsDrawer] Focusing drawer')
   e?.preventDefault()
   showEscHint.value = false
-  nextTick(() => {
-    drawerRef.value?.focus()
-    console.log('[NotificationsDrawer] Drawer focused, activeElement:', document.activeElement)
-  })
+  nextTick(() => drawerRef.value?.focus())
 }
 </script>
 
@@ -500,29 +488,30 @@ function handleFocusDrawer(e?: Event) {
             </div>
           </Transition>
 
-          <Transition name="fade">
-            <!-- Iframe -->
-            <iframe
-              v-show="showIframe"
-              ref="iframeRef"
-              :src="src"
-              frameborder="0"
-              pointer-events-auto
-              pos="relative right-0"
-              sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
-              w-inherit
-              max-w-inherit
-              :style="{
-                height: 'calc(100%)',
-                opacity: isIframeDisplayReady ? 1 : 0,
-                visibility: isIframeDisplayReady ? 'visible' : 'hidden',
-                pointerEvents: isIframeDisplayReady ? 'auto' : 'none',
-                transition: 'opacity 0.2s ease',
-                backgroundColor: 'var(--bew-bg)',
-              }"
-              @load="handleIframeLoad"
-            />
-          </Transition>
+          <!--
+            Iframe 的显隐只由 isIframeDisplayReady 驱动（含延迟揭幕），
+            不要再套外层 Transition：那会与内联的 opacity/transition 争夺同一属性。
+          -->
+          <iframe
+            v-show="showIframe"
+            ref="iframeRef"
+            :src="src"
+            frameborder="0"
+            pointer-events-auto
+            pos="relative right-0"
+            sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
+            w-inherit
+            max-w-inherit
+            :style="{
+              height: 'calc(100%)',
+              opacity: isIframeDisplayReady ? 1 : 0,
+              visibility: isIframeDisplayReady ? 'visible' : 'hidden',
+              pointerEvents: isIframeDisplayReady ? 'auto' : 'none',
+              transition: 'opacity var(--bew-duration-normal, 200ms) var(--bew-ease-standard, ease)',
+              backgroundColor: 'var(--bew-bg)',
+            }"
+            @load="handleIframeLoad"
+          />
         </div>
       </Transition>
     </div>
@@ -532,12 +521,23 @@ function handleFocusDrawer(e?: Event) {
 <style lang="scss" scoped>
 .drawer-enter-active,
 .drawer-leave-active {
-  transition: transform 0.3s;
+  transition: transform var(--bew-duration-moderate, 300ms) var(--bew-ease-standard, ease);
 }
 
 .drawer-enter-from,
 .drawer-leave-to {
   transform: translateX(100%);
+}
+
+// 降级偏好：去掉滑入滑出位移，抽屉即时显隐（遮罩的淡入淡出仍保留）
+@media (prefers-reduced-motion: reduce) {
+  .drawer-enter-active,
+  .drawer-leave-active,
+  .drawer-enter-from,
+  .drawer-leave-to {
+    transition: none;
+    transform: none;
+  }
 }
 
 /* 修改全局样式，避免重复设置 */

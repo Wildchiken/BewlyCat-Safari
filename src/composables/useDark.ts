@@ -1,15 +1,63 @@
 import { usePreferredDark } from '@vueuse/core'
 
-import { DARK_MODE_BASE_COLOR_CHANGE } from '~/constants/globalEvents'
+import { DARK_MODE_BASE_COLOR_CHANGE, IFRAME_DARK_MODE_CHANGE } from '~/constants/globalEvents'
 import { settings } from '~/logic'
 import { isVideoPlaybackPage, setCookie } from '~/utils/main'
 
 const currentUrl = ref(typeof location === 'undefined' ? '' : location.href)
 const currentMinuteOfDay = ref(getCurrentMinuteOfDay())
+const iframeTheme = ref<{ isDark: boolean, baseColor?: string }>()
+let isIframeThemeListenerStarted = false
 let isRouteWatcherStarted = false
 let isScheduleClockStarted = false
 let lastThemeChangeState: boolean | undefined
 let lastDarkModeBaseColor: string | undefined
+let isBiliDarkSuppressed = false
+let biliDarkObserver: MutationObserver | undefined
+function removeSuppressedBiliDark() {
+  if (isBiliDarkSuppressed && document.documentElement.classList.contains('bili_dark'))
+    document.documentElement.classList.remove('bili_dark')
+}
+
+/**
+ * 动态页等原站应用会在 created 阶段按 theme_style cookie 重新加上 bili_dark，
+ * 其 `#app::after` 纹理层会盖住整页直到插件挂载（#991），因此需持续剥离。
+ */
+function setBiliDarkSuppressed(suppressed: boolean) {
+  isBiliDarkSuppressed = suppressed
+  if (!suppressed)
+    return
+
+  removeSuppressedBiliDark()
+  if (biliDarkObserver)
+    return
+
+  biliDarkObserver = new MutationObserver(removeSuppressedBiliDark)
+  biliDarkObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+}
+
+// content script 需在 document_start 同步调用，避免等设置加载期间漏掉父窗口在 load 后发送的主题。
+export function startIframeThemeListener() {
+  if (isIframeThemeListenerStarted || typeof window === 'undefined' || window.parent === window)
+    return
+
+  isIframeThemeListenerStarted = true
+  window.addEventListener('message', ({ source, origin, data }) => {
+    if (source !== window.parent || !/^https?:\/\/(?:[\w-]+\.)?bilibili\.com$/.test(origin)
+      || data?.type !== IFRAME_DARK_MODE_CHANGE || typeof data.isDark !== 'boolean') {
+      return
+    }
+
+    // 保留父窗口的有效主题，消息页 hash 路由切换时也不能退回自身的全站主题。
+    // 仅在当前 iframe 文档内继承，不写入用户设置。
+    iframeTheme.value = {
+      isDark: data.isDark,
+      baseColor: typeof data.darkModeBaseColor === 'string' && CSS.supports('color', data.darkModeBaseColor)
+        ? data.darkModeBaseColor
+        : iframeTheme.value?.baseColor,
+    }
+  })
+}
 
 function getCurrentMinuteOfDay(): number {
   const now = new Date()
@@ -102,12 +150,15 @@ function syncBilibiliTheme(isDark: boolean) {
 }
 
 export function useDark() {
+  startIframeThemeListener()
   startRouteWatcher()
   startScheduleClock()
 
   const isPreferredDark = usePreferredDark()
   const currentSystemColorScheme = computed(() => isPreferredDark.value ? 'dark' : 'light')
   const currentAppColorScheme = computed((): 'dark' | 'light' => {
+    if (iframeTheme.value)
+      return iframeTheme.value.isDark ? 'dark' : 'light'
     if (settings.value.theme === 'light' || settings.value.theme === 'dark')
       return settings.value.theme
     if (settings.value.theme === 'scheduled') {
@@ -123,11 +174,10 @@ export function useDark() {
   const isVideoPageDark = computed(() => {
     return settings.value.videoPageDarkMode && isVideoPlaybackPage(currentUrl.value)
   })
-  const isDark = computed(() => currentAppColorScheme.value === 'dark' || isVideoPageDark.value)
+  const isDark = computed(() => iframeTheme.value?.isDark ?? (currentAppColorScheme.value === 'dark' || isVideoPageDark.value))
+  const darkModeBaseColor = computed(() => iframeTheme.value?.baseColor ?? settings.value.darkModeBaseColor)
 
-  // Apply appearance only when an effective theme input changes. The settings
-  // adapter replaces its object on every write, so a getter returning an array
-  // would otherwise fire for unrelated settings as well.
+  // Apply appearance only when an effective theme input changes.
   watch(
     [
       isDark,
@@ -143,7 +193,7 @@ export function useDark() {
 
   // 监听深色模式基准颜色变化
   watch(
-    () => settings.value.darkModeBaseColor,
+    darkModeBaseColor,
     (newColor) => {
       setDarkModeBaseColor(newColor)
       if (lastDarkModeBaseColor === newColor)
@@ -177,7 +227,7 @@ export function useDark() {
       }
 
       // 确保深色模式基准颜色被正确应用
-      setDarkModeBaseColor(settings.value.darkModeBaseColor)
+      setDarkModeBaseColor(darkModeBaseColor.value)
     }
     else {
       document.querySelector('#bewly')?.classList?.remove('dark')
@@ -195,19 +245,7 @@ export function useDark() {
     // Only used as a temporary solution, which will eventually be removed
     // It seems like Bilibili already supports dark mode when the `bili_dark` class is added to the `html` element
     // but it's not yet fully refined.
-    // On Safari, removing bili_dark breaks Shadow DOM comment text colors because
-    // Bilibili's Web Components rely on bili_dark to toggle internal dark mode.
-    // eslint-disable-next-line node/prefer-global/process
-    if (!Boolean(process.env.SAFARI) && currentAppColorScheme.value === 'dark') {
-      if (document.documentElement.classList.contains('bili_dark')) {
-        document.documentElement.classList.remove('bili_dark')
-      }
-    }
-    // else {
-    //   if (!document.documentElement.classList.contains('bili_dark')) {
-    //     document.documentElement.classList.add('bili_dark')
-    //   }
-    // }
+    setBiliDarkSuppressed(currentAppColorScheme.value === 'dark')
   }
 
   function toggleDark(e: MouseEvent) {

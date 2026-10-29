@@ -44,6 +44,7 @@ const {
   userRelations,
   batchQueryUserRelations,
   updateUserRelation,
+  reset: resetUserRelations,
 } = useUserRelations()
 
 // 搜索请求管理
@@ -154,7 +155,7 @@ async function performSearch(loadMore: boolean): Promise<boolean> {
 
   const success = await search(
     keyword,
-    params => api.search.searchUser(params),
+    (params, request) => api.search.searchUser(params, request),
     {
       page: targetPage,
       page_size: SEARCH_PAGE_SIZES.user,
@@ -239,7 +240,7 @@ async function handlePageChange(page: number) {
 
   const success = await search(
     keyword,
-    params => api.search.searchUser(params),
+    (params, request) => api.search.searchUser(params, request),
     {
       page,
       page_size: SEARCH_PAGE_SIZES.user,
@@ -249,8 +250,10 @@ async function handlePageChange(page: number) {
     },
   )
 
-  if (!success || !lastResponse.value?.data)
+  if (!success || !lastResponse.value?.data) {
+    isPageChanging.value = false
     return
+  }
 
   const rawData = lastResponse.value.data
   const incomingList = Array.isArray(rawData?.result) ? rawData.result : []
@@ -274,6 +277,7 @@ async function handlePageChange(page: number) {
 }
 
 function resetAll() {
+  resetUserRelations()
   resetSearch()
   resetPagination()
   resetLoadMore()

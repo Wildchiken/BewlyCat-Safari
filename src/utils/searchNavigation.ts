@@ -1,5 +1,7 @@
+import { IFRAME_SEARCH_NAVIGATION } from '~/constants/globalEvents'
 import { settings } from '~/logic'
-import { isHomePage, isInIframe } from '~/utils/main'
+import { isActualHomepage, isHomePage, isInIframe } from '~/utils/main'
+import { openLinkInBackground } from '~/utils/tabs'
 
 const NATIVE_SEARCH_CATEGORY_BY_PATH: Record<string, string> = {
   article: 'article',
@@ -71,11 +73,14 @@ export function navigateToPluginSearchResults(keyword: string): boolean {
 
   const targetUrl = `https://www.bilibili.com/?page=SearchResults&keyword=${encodeURIComponent(normalized)}`
 
+  if (isInIframe()) {
+    // 抽屉的 sandbox 禁止直接导航顶层窗口，由持有 iframe 的父页面处理。
+    window.parent.postMessage({ type: IFRAME_SEARCH_NAVIGATION, keyword: normalized }, '*')
+    return true
+  }
+
   if (!isHomePage()) {
-    if (isInIframe())
-      window.top?.location.assign(targetUrl)
-    else
-      window.location.assign(targetUrl)
+    window.location.assign(targetUrl)
     return true
   }
 
@@ -88,6 +93,50 @@ export function navigateToPluginSearchResults(keyword: string): boolean {
   window.history.pushState({}, '', `${window.location.pathname}?${params.toString()}`)
   window.dispatchEvent(new Event('pushstate'))
   return true
+}
+
+/**
+ * 按「搜索栏链接打开行为」打开搜索结果：
+ * 链接经 buildKeywordSearchUrl 构建（开启插件搜索页时指向插件搜索结果页），
+ * 后台模式走后台标签页，其余按 target 映射用 window.open 打开。
+ */
+export function openSearchResults(keyword: string): void {
+  const searchUrl = buildKeywordSearchUrl(keyword)
+  const mode = settings.value.searchBarLinkOpenMode
+
+  if (mode === 'background') {
+    void openLinkInBackground(searchUrl)
+    return
+  }
+
+  let target = '_blank'
+  if (mode === 'currentTabIfNotHomepage')
+    target = isActualHomepage() ? '_blank' : '_self'
+  else if (mode === 'currentTabIfHomepage')
+    target = isActualHomepage() ? '_self' : '_blank'
+  else if (mode === 'currentTab')
+    target = '_self'
+
+  window.open(searchUrl, target)
+}
+
+/**
+ * 搜索栏等入口的插件搜索页接管：仅就地打开模式才原地切换；
+ * 新标签页 / 后台标签页模式返回 false，交由调用方按「搜索栏链接打开行为」处理，
+ * 调用方构建的链接同样经 buildKeywordSearchUrl 指向插件搜索结果页。
+ */
+export function navigateToPluginSearchResultsInPlace(keyword: string): boolean {
+  const mode = settings.value.searchBarLinkOpenMode
+  if (
+    mode === 'newTab'
+    || mode === 'background'
+    || (mode === 'currentTabIfNotHomepage' && isActualHomepage())
+    || (mode === 'currentTabIfHomepage' && !isActualHomepage())
+  ) {
+    return false
+  }
+
+  return navigateToPluginSearchResults(keyword)
 }
 
 /**

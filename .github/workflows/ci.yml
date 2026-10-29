@@ -104,7 +104,7 @@ jobs:
 
       - name: Upload Safari Extension Zip
         if: ${{ matrix.os == 'ubuntu-latest' && matrix.node == 'lts/*' && github.ref_name == 'main' }}
-        uses: actions/upload-artifact@v4.3.1
+        uses: actions/upload-artifact@v4
         with:
           name: BewlyCat-safari-extension
           path: extension-safari

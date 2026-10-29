@@ -1,20 +1,27 @@
 <script lang="ts" setup>
-import QRCodeVue from 'qrcode.vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from 'vue-toastification'
 import draggable from 'vuedraggable'
 
+import AppAuthorizationDialog from '~/components/AppAuthorizationDialog.vue'
 import Input from '~/components/Input.vue'
 import Radio from '~/components/Radio.vue'
 import { HomeSubPage } from '~/contentScripts/views/Home/types'
 import { appAuthTokens, settings } from '~/logic'
-import type { RecommendationMode, TabsPosition } from '~/logic/storage'
+import type { RecommendationModeOption, Settings, TabsPosition } from '~/logic/storage'
+import { MIN_RECOMMENDATION_MODE_SWITCHER_OPTIONS } from '~/logic/storage'
 import { useMainStore } from '~/stores/mainStore'
-import { getTVLoginQRCode, hasValidAppAuthTokens, pollTVLoginQRCode, revokeAccessKey, saveAppAuthTokens } from '~/utils/authProvider'
+import { hasValidAppAuthTokens, revokeAccessKey } from '~/utils/authProvider'
+import {
+  applyRecommendationModeOption,
+  createRecommendationModeOptions,
+  getRecommendationModeOption,
+} from '~/utils/recommendationMode'
 
 import SettingsItem from '../../components/SettingsItem.vue'
 import SettingsItemGroup from '../../components/SettingsItemGroup.vue'
 import SettingsSegmentedControl from '../../components/SettingsSegmentedControl.vue'
+import SettingsToggleTag from '../../components/SettingsToggleTag.vue'
 import SearchPage from '../SearchPage/SearchPage.vue'
 import FilterByTitleTable from './components/FilterByTitleTable.vue'
 import FilterByUserTable from './components/FilterByUserTable.vue'
@@ -23,10 +30,32 @@ const mainStore = useMainStore()
 const { t } = useI18n()
 const toast = useToast()
 
-const recommendationModeOptions = computed<{ label: string, value: RecommendationMode }[]>(() => [
-  { label: 'Web', value: 'web' },
-  { label: t('settings.recommendation_mode_web_no_cookie'), value: 'webNoCookie' },
-  { label: 'App', value: 'app' },
+const recommendationModeOptions = computed(() => createRecommendationModeOptions(t))
+const recommendationModeOption = computed({
+  get: () => getRecommendationModeOption(),
+  set: option => applyRecommendationModeOption(option),
+})
+
+const recommendationModeOptionIcons: Record<RecommendationModeOption, string> = {
+  web: 'i-tabler-world',
+  webNoCookie: 'i-tabler-spy',
+  appSingle: 'i-tabler-layout-list',
+  appDouble: 'i-tabler-layout-grid',
+}
+
+function getRecommendationModeLabel(mode: RecommendationModeOption) {
+  return recommendationModeOptions.value.find(option => option.value === mode)?.label ?? mode
+}
+
+function handleToggleRecommendationModeSwitcherOption(item: Settings['recommendationModeSwitcherOptions'][number], visible: boolean) {
+  if (!visible && settings.value.recommendationModeSwitcherOptions.filter(option => option.visible).length <= MIN_RECOMMENDATION_MODE_SWITCHER_OPTIONS)
+    return
+  item.visible = visible
+}
+
+const followingUploaderSortOptions = computed<{ label: string, value: Settings['followingUploaderSort'] }[]>(() => [
+  { label: t('settings.following_sort_updated'), value: 'updated' },
+  { label: t('settings.following_sort_group'), value: 'group' },
 ])
 
 const homeTabsPositionOptions = computed<{ label: string, value: TabsPosition }[]>(() => [
@@ -36,83 +65,28 @@ const homeTabsPositionOptions = computed<{ label: string, value: TabsPosition }[
 
 const showSearchPageModeSharedSettings = ref<boolean>(false)
 const showQRCodeDialog = ref<boolean>(false)
-const loginQRCodeUrl = ref<string>()
-const pollLoginQRCodeInterval = ref<any>(null)
-const authCode = ref<string>('')
-const qrcodeMsg = ref<string>('')
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
 
 const appAccessToken = computed(() => appAuthTokens.value.accessToken)
 
-function cleanupQRCodeDialog() {
-  clearInterval(pollLoginQRCodeInterval.value)
-  pollLoginQRCodeInterval.value = null
-  showQRCodeDialog.value = false
-}
-
-onDeactivated(cleanupQRCodeDialog)
-
-onBeforeUnmount(cleanupQRCodeDialog)
-
-function handleRecommendationModeChange(mode: RecommendationMode) {
-  if (mode === 'app' && !hasValidAppAuthTokens())
+function handleRecommendationModeChange(option: RecommendationModeOption) {
+  if ((option === 'appSingle' || option === 'appDouble') && !hasValidAppAuthTokens())
     handleAuthorize()
 }
 
-async function handleAuthorize() {
+function handleAuthorize() {
   showQRCodeDialog.value = true
-  try {
-    await setLoginQRCode()
-    if (showQRCodeDialog.value)
-      pollLoginQRCode()
-  }
-  catch (error) {
-    console.error(error)
-  }
 }
 
 function handleRevoke() {
   revokeAccessKey()
 }
 
-async function setLoginQRCode() {
-  const res = await getTVLoginQRCode()
-  if (res.code === 0) {
-    loginQRCodeUrl.value = res.data.url
-    authCode.value = res.data.auth_code
-  }
-}
-
-function pollLoginQRCode() {
-  clearInterval(pollLoginQRCodeInterval.value)
-
-  pollLoginQRCodeInterval.value = setInterval(async () => {
-    const pollRes = await pollTVLoginQRCode(authCode.value)
-
-    // 0：成功
-    // -3：API校验密匙错误
-    // -400：请求错误
-    // -404：啥都木有
-    // 86038：二维码已失效
-    // 86039：二维码尚未确认
-    // 86090：二维码已扫码未确认
-    if (pollRes.code !== 0)
-      qrcodeMsg.value = pollRes.message
-    if (pollRes.code === 0) {
-      cleanupQRCodeDialog()
-      saveAppAuthTokens(pollRes.data)
-      toast.success('授权成功')
-    }
-    else if (pollRes.code === 86038) {
-      await setLoginQRCode()
-    }
-    else if (pollRes.code === -3 || pollRes.code === -400 || pollRes.code === -404) {
-      toast.error(pollRes.message)
-    }
-  }, 3000)
-}
-
 function handleCloseQRCodeDialog() {
-  cleanupQRCodeDialog()
+  showQRCodeDialog.value = false
 }
 
 function handleExport(filterType: 'title' | 'user') {
@@ -138,17 +112,26 @@ function handleImport(filterType: 'title' | 'user') {
 
     try {
       const fileContent = await file.text()
-      const importedFilters = JSON.parse(fileContent) as { keyword: string, remark: string }[]
+      const importedFilters: unknown = JSON.parse(fileContent)
 
-      if (!Array.isArray(importedFilters) || !importedFilters.every(filter => 'keyword' in filter && 'remark' in filter)) {
+      if (!Array.isArray(importedFilters)
+        || !importedFilters.every(filter => isRecord(filter)
+          && typeof filter.keyword === 'string'
+          && typeof filter.remark === 'string'
+          && filter.keyword.trim() !== '')) {
         throw new Error('Invalid file format')
       }
 
+      const normalized = importedFilters.map(filter => ({
+        keyword: filter.keyword.trim(),
+        remark: filter.remark.trim(),
+      }))
+
       if (filterType === 'title') {
-        settings.value.filterByTitle = importedFilters
+        settings.value.filterByTitle = normalized
       }
       else {
-        settings.value.filterByUser = importedFilters
+        settings.value.filterByUser = normalized
       }
       // toast.success(`${filterType} filters imported successfully`)
     }
@@ -189,12 +172,15 @@ function resetHomeTabs() {
   })
 }
 
-function handleToggleHomeTab(tab: any) {
-  // Prevent disabling all tabs if there is only one
-  if (settings.value.homePageTabVisibilityList.filter(tab => tab.visible === true).length > 1)
-    tab.visible = !tab.visible
-  else
-    tab.visible = true
+function getHomeTabLabel(page: HomeSubPage) {
+  return t(mainStore.homeTabs.find(tab => tab.page === page)?.i18nKey ?? '')
+}
+
+function handleToggleHomeTab(tab: Settings['homePageTabVisibilityList'][number], visible: boolean) {
+  // 至少保留一个可见标签
+  if (!visible && settings.value.homePageTabVisibilityList.filter(item => item.visible).length <= 1)
+    return
+  tab.visible = visible
 }
 </script>
 
@@ -206,11 +192,45 @@ function handleToggleHomeTab(tab: any) {
           <p>{{ $t('settings.recommendation_mode_desc') }}</p>
         </template>
         <SettingsSegmentedControl
-          v-model="settings.recommendationMode"
+          v-model="recommendationModeOption"
           :label="$t('settings.recommendation_mode')"
           :options="recommendationModeOptions"
           @change="handleRecommendationModeChange"
         />
+      </SettingsItem>
+
+      <SettingsItem
+        :title="$t('settings.show_recommendation_mode_switcher')"
+        :desc="$t('settings.show_recommendation_mode_switcher_desc')"
+        right-width="auto"
+      >
+        <Radio v-model="settings.showRecommendationModeSwitcher" />
+      </SettingsItem>
+
+      <SettingsItem
+        v-if="settings.showRecommendationModeSwitcher"
+        :title="$t('settings.recommendation_mode_switcher_options')"
+        :desc="$t('settings.recommendation_mode_switcher_options_desc')"
+      >
+        <template #bottom>
+          <draggable
+            v-model="settings.recommendationModeSwitcherOptions"
+            item-key="mode"
+            class="settings-draggable-tags"
+            :force-fallback="true"
+            role="group"
+            :aria-label="$t('settings.recommendation_mode_switcher_options')"
+          >
+            <template #item="{ element }">
+              <SettingsToggleTag
+                :model-value="element.visible"
+                :label="getRecommendationModeLabel(element.mode)"
+                :icon="recommendationModeOptionIcons[element.mode as RecommendationModeOption]"
+                @update:model-value="handleToggleRecommendationModeSwitcherOption(element, $event)"
+              />
+            </template>
+          </draggable>
+        </template>
       </SettingsItem>
 
       <SettingsItem
@@ -252,42 +272,62 @@ function handleToggleHomeTab(tab: any) {
         <Radio v-model="settings.preserveForYouState" />
       </SettingsItem>
 
-      <Dialog
+      <AppAuthorizationDialog
         v-if="showQRCodeDialog"
-        width="50%"
-        max-width="800px"
-        append-to-bewly-body
-        :show-footer="false"
-        :title="$t('settings.authorize_app')" center
         @close="handleCloseQRCodeDialog"
+      />
+    </SettingsItemGroup>
+
+    <SettingsItemGroup :title="$t('settings.group_immersive_mode')">
+      <SettingsItem
+        :title="$t('settings.show_immersive_mode_entry')"
+        :desc="$t('settings.show_immersive_mode_entry_desc')"
+        right-width="auto"
       >
-        <div flex="~ col gap-4 items-center">
-          <div>
-            <p mb-2 text-center>
-              {{ $t('settings.scan_qrcode_desc') }}
-            </p>
-            <p text="$bew-text-2 sm">
-              {{ $t('settings.authorize_app_desc') }}
-            </p>
-          </div>
+        <Radio v-model="settings.showImmersiveModeEntry" />
+      </SettingsItem>
 
-          <div bg-white border="white 4">
-            <QRCodeVue v-if="loginQRCodeUrl" :value="loginQRCodeUrl" :size="150" />
-            <div v-else w-150px h-150px grid="~ place-items-center">
-              <div i-svg-spinners:ring-resize />
-            </div>
-          </div>
+      <template v-if="settings.showImmersiveModeEntry">
+        <SettingsItem
+          :title="$t('settings.immersive_wheel_switch')"
+          :desc="$t('settings.immersive_wheel_switch_desc')"
+          right-width="auto"
+        >
+          <Radio v-model="settings.immersiveWheelSwitch" />
+        </SettingsItem>
 
-          <p>{{ qrcodeMsg }}</p>
+        <SettingsItem
+          :title="$t('settings.immersive_keyboard_switch')"
+          :desc="$t('settings.immersive_keyboard_switch_desc')"
+          right-width="auto"
+        >
+          <Radio v-model="settings.immersiveKeyboardSwitch" />
+        </SettingsItem>
 
-          <Button
-            type="secondary"
-            @click="setLoginQRCode"
-          >
-            {{ $t('common.operation.refresh') }}
-          </Button>
-        </div>
-      </Dialog>
+        <SettingsItem
+          :title="$t('settings.immersive_auto_play')"
+          :desc="$t('settings.immersive_auto_play_desc')"
+          right-width="auto"
+        >
+          <Radio v-model="settings.immersiveAutoPlay" />
+        </SettingsItem>
+
+        <SettingsItem
+          :title="$t('settings.immersive_auto_next')"
+          :desc="$t('settings.immersive_auto_next_desc')"
+          right-width="auto"
+        >
+          <Radio v-model="settings.immersiveAutoNext" />
+        </SettingsItem>
+
+        <SettingsItem
+          :title="$t('settings.immersive_preload_next')"
+          :desc="$t('settings.immersive_preload_next_desc')"
+          right-width="auto"
+        >
+          <Radio v-model="settings.immersivePreloadNext" />
+        </SettingsItem>
+      </template>
     </SettingsItemGroup>
 
     <SettingsItemGroup
@@ -314,21 +354,17 @@ function handleToggleHomeTab(tab: any) {
           <draggable
             v-model="settings.homePageTabVisibilityList"
             item-key="page"
-            :component-data="{ style: 'display: flex; gap: 0.5rem; flex-wrap: wrap;' }"
+            class="settings-draggable-tags"
+            :force-fallback="true"
+            role="group"
+            :aria-label="$t('settings.home_tabs_adjustment')"
           >
             <template #item="{ element }">
-              <div
-                class="bew-settings-option--lift"
-                flex="~ gap-2 items-center" p="x-4 y-2" bg="$bew-fill-1" rounded="$bew-radius" cursor-all-scroll
-                duration-300
-                :style="{
-                  background: element.visible ? 'var(--bew-theme-color-20)' : 'var(--bew-fill-1)',
-                  color: element.visible ? 'var(--bew-theme-color)' : 'var(--bew-text-1)',
-                }"
-                @click="handleToggleHomeTab(element)"
-              >
-                {{ $t(mainStore.homeTabs.find(tab => tab.page === element.page)?.i18nKey ?? '') }}
-              </div>
+              <SettingsToggleTag
+                :model-value="element.visible"
+                :label="getHomeTabLabel(element.page)"
+                @update:model-value="handleToggleHomeTab(element, $event)"
+              />
             </template>
           </draggable>
         </template>
@@ -523,6 +559,13 @@ function handleToggleHomeTab(tab: any) {
       <SettingsItem :title="$t('settings.use_following_new_layout')" :desc="$t('settings.use_following_new_layout_desc')" right-width="auto">
         <Radio v-model="settings.useFollowingNewLayout" />
       </SettingsItem>
+      <SettingsItem :title="$t('settings.following_sort')" right-width="auto">
+        <SettingsSegmentedControl
+          v-model="settings.followingUploaderSort"
+          :label="$t('settings.following_sort')"
+          :options="followingUploaderSortOptions"
+        />
+      </SettingsItem>
       <SettingsItem :title="$t('settings.following_tab_show_livestreaming_videos')" right-width="auto">
         <Radio v-model="settings.followingTabShowLivestreamingVideos" />
       </SettingsItem>
@@ -537,6 +580,18 @@ function handleToggleHomeTab(tab: any) {
 </template>
 
 <style lang="scss" scoped>
+// 可拖拽排序的开关标签列表。使用 Sortable 的 fallback 拖拽：Firefox 不会在 <button> 上触发
+// 原生 dragstart，且 fallback 会在拖动结束后拦截随之而来的 click，避免误切换可见性。
+.settings-draggable-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--bew-space-2);
+
+  :deep(.settings-toggle-tag) {
+    cursor: grab;
+  }
+}
+
 .unrestricted-width-settings-item {
   :deep(.left-content) {
     --uno: w-full;

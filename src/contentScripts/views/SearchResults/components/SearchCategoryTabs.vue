@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
+
 import { settings } from '~/logic'
 
 import type { SearchCategory, SearchCategoryOption } from '../types'
@@ -13,6 +15,8 @@ const emit = defineEmits<{
   (event: 'select', category: SearchCategory): void
 }>()
 
+const { locale } = useI18n()
+
 function handleSelect(category: SearchCategory) {
   emit('select', category)
 }
@@ -23,7 +27,7 @@ function formatCount(count: number): string {
   if (count > 99)
     return '99+'
   if (count >= 10000)
-    return `${(count / 10000).toFixed(1)}万`
+    return new Intl.NumberFormat(locale.value, { notation: 'compact', maximumFractionDigits: 1 }).format(count)
   return `${count}`
 }
 </script>
@@ -57,10 +61,28 @@ function formatCount(count: number): string {
         </span>
       </button>
     </div>
+
+    <div v-if="$slots.actions" class="search-categories__actions">
+      <slot name="actions" />
+    </div>
   </div>
 </template>
 
 <style scoped lang="scss">
+.search-categories {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--bew-space-4);
+}
+
+.search-categories__actions {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--bew-space-4);
+}
+
 .search-category-control {
   max-width: 100%;
   overflow-x: auto;
@@ -69,6 +91,12 @@ function formatCount(count: number): string {
 
 .search-category-control::-webkit-scrollbar {
   display: none;
+}
+
+@media (max-width: 600px) {
+  .search-categories {
+    flex-direction: column;
+  }
 }
 
 .category-tab__count {

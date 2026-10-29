@@ -30,9 +30,14 @@ const props = withDefaults(defineProps<{
   showFooter?: boolean
   centerFooter?: boolean
   loading?: boolean
+  /** 执行进度由内容区展示时，可隐藏默认的加载遮罩。 */
+  showLoadingOverlay?: boolean
   preventCloseWhenLoading?: boolean
+  closeOnConfirm?: boolean
 }>(), {
+  closeOnConfirm: true,
   preventCloseWhenLoading: true,
+  showLoadingOverlay: true,
   frostedGlass: true,
   showHeader: true,
   showBorder: true,
@@ -161,13 +166,15 @@ function handleClose() {
 }
 
 function handleConfirm() {
-  if (isClosing || closeEmitted)
+  if (isClosing || closeEmitted || props.loading)
     return
 
   emit('confirm')
-  if (!props.loading)
+  if (props.closeOnConfirm && !props.loading)
     handleClose()
 }
+
+defineExpose({ close: handleClose })
 </script>
 
 <template>
@@ -196,7 +203,7 @@ function handleConfirm() {
           <!-- loading masking -->
           <Transition name="fade">
             <div
-              v-if="loading"
+              v-if="loading && showLoadingOverlay"
               pos="absolute top-0 left-0" w-full h-full bg="white dark:black opacity-60 dark:opacity-60" flex="~ justify-center items-center"
               rounded="$bew-modal-radius"
               z-2
@@ -243,6 +250,7 @@ function handleConfirm() {
             <button
               type="button"
               aria-label="Close"
+              :disabled="loading && preventCloseWhenLoading"
               class="dialog__close"
               style="
                 backdrop-filter: var(--bew-filter-glass-1);
@@ -339,6 +347,11 @@ function handleConfirm() {
 .dialog__close {
   appearance: none;
   padding: 0;
+
+  &:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
 
   &:focus-visible {
     outline: 2px solid var(--bew-theme-color-40);

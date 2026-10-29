@@ -1,21 +1,38 @@
+import { watch } from 'vue'
+
 import { settings } from '~/logic'
-import { applyBewlyWidescreen, ensureNativePlayerModeGuard, exitBewlyWidescreen, isBewlyWidescreenActive, showBewlyWidescreenSwitchHint } from '~/utils/bewlyWidescreen'
+import { applyBewlyWidescreen, ensureNativePlayerModeGuard, exitBewlyWidescreen, isBewlyWidescreenActive, isBewlyWidescreenEngaged, showBewlyWidescreenSwitchHint } from '~/utils/bewlyWidescreen'
 import { i18n } from '~/utils/i18n'
 import { isVideoOrBangumiPage } from '~/utils/main'
 
+import { schedulePlayerControlFit } from './playerControlFit'
+
 const PLAYER_CONTROL_BAR_SELECTOR = '.bpx-player-control-bottom-right'
-const PLAYER_ROOT_SELECTOR = '#playerWrap, #bilibili-player, #bilibiliPlayer, .bpx-player-container, .bilibili-player'
+const PLAYER_ROOT_SELECTOR = '#bilibili-player-wrap, #playerWrap, #bilibili-player, #bilibiliPlayer, .bpx-player-container, .bilibili-player'
 const PLAYER_MODE_BUTTON_SELECTOR = '.bpx-player-ctrl-web, .bilibili-player-video-web-fullscreen'
 const BUTTON_CLASS = 'bewly-widescreen-control'
-const TOOLTIP_CLASS = 'bewly-widescreen-tooltip'
+const TOOLTIP_CLASS = 'bewly-player-tooltip'
 const CONTROL_DISCOVERY_TIMEOUT = 15_000
 const CONTROL_DISCOVERY_RETRY_INTERVAL = 500
 const APPLY_TIMEOUT = 30_000
 
-const widescreenIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 88 88" style="width: 100%; height: 100%;">
-  <rect x="15" y="20" width="58" height="48" rx="5" fill="none" stroke="currentColor" stroke-width="5"/>
-  <path d="M29 32h12M29 32v10M59 32H47M59 32v10M29 56h12M29 56V46M59 56H47M59 56V46" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>
+// 与原生控制栏 Lottie 图标同为 88 网格面性图形；镂空侧栏以区分原生宽屏/网页全屏
+let widescreenIconCount = 0
+
+// 箭头与侧栏是挖空在白色框体上的遮罩，悬停时由 videoPlayer.scss 驱动遮罩内的元素
+function createWidescreenIcon() {
+  const maskId = `bewly-widescreen-icon-mask-${++widescreenIconCount}`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 88 88" style="width: 100%; height: 100%;">
+  <mask id="${maskId}" maskUnits="userSpaceOnUse" x="0" y="0" width="88" height="88">
+    <rect x="8" y="16" width="72" height="56" rx="8" fill="#fff"/>
+    <rect class="bewly-widescreen-icon-sidebar" x="56" y="24" width="16" height="40" rx="2" fill="#000"/>
+    <path class="bewly-widescreen-icon-head-left" d="M16 44l10-10v20Z" fill="#000"/>
+    <rect class="bewly-widescreen-icon-shaft" x="24" y="41" width="18" height="6" fill="#000"/>
+    <path class="bewly-widescreen-icon-head-right" d="M50 44l-10-10v20Z" fill="#000"/>
+  </mask>
+  <rect x="8" y="16" width="72" height="56" rx="8" fill="#fff" mask="url(#${maskId})"/>
 </svg>`
+}
 
 let controlContainer: HTMLElement | null = null
 let observedPlayerRoot: HTMLElement | null = null
@@ -44,7 +61,7 @@ function findPlayerControlBar(): HTMLElement | null {
 }
 
 function findPlayerRoot(controlBar?: HTMLElement | null): HTMLElement | null {
-  return controlBar?.closest<HTMLElement>('#playerWrap, #bilibili-player, #bilibiliPlayer')
+  return controlBar?.closest<HTMLElement>('#bilibili-player-wrap, #playerWrap, #bilibili-player, #bilibiliPlayer')
     ?? controlBar?.closest<HTMLElement>('.bpx-player-container, .bilibili-player')
     ?? document.querySelector<HTMLElement>(PLAYER_ROOT_SELECTOR)
 }
@@ -63,7 +80,7 @@ function isControlUnavailable() {
 }
 
 function shouldManageControl() {
-  return isVideoOrBangumiPage()
+  return settings.value.showBewlyWidescreenButton && isVideoOrBangumiPage()
 }
 
 function updateControlState(button = controlContainer) {
@@ -71,19 +88,23 @@ function updateControlState(button = controlContainer) {
     return
 
   const active = isBewlyWidescreenActive()
-  const unavailable = isControlUnavailable()
-  const hidden = isBrowserFullscreen() || isWebFullscreen()
   const label = getButtonLabel(active)
 
-  button.hidden = hidden
+  // 全屏/窄屏显隐交给 CSS；相同状态不重复写 DOM，避免触发原生播放器观察器。
+  if (button.getAttribute('aria-label') === label
+    && button.getAttribute('aria-busy') === String(isApplying)
+    && button.classList.contains('bpx-state-entered') === active) {
+    return
+  }
+
   button.setAttribute('aria-label', label)
   const tooltip = button.querySelector<HTMLElement>(`.${TOOLTIP_CLASS}`)
   if (tooltip)
     tooltip.textContent = label
-  button.setAttribute('aria-disabled', String(unavailable || isApplying))
+  button.setAttribute('aria-disabled', String(isApplying))
   button.setAttribute('aria-busy', String(isApplying))
-  button.setAttribute('tabindex', hidden || unavailable || isApplying ? '-1' : '0')
-  button.classList.toggle('is-disabled', unavailable || isApplying)
+  button.setAttribute('tabindex', isApplying ? '-1' : '0')
+  button.classList.toggle('is-disabled', isApplying)
   button.classList.toggle('bpx-state-entered', active)
 }
 
@@ -118,7 +139,7 @@ function createControlContainer(): HTMLElement {
 
   const iconWrapper = document.createElement('span')
   iconWrapper.className = 'bpx-common-svg-icon'
-  iconWrapper.innerHTML = widescreenIcon
+  iconWrapper.innerHTML = createWidescreenIcon()
   icon.appendChild(iconWrapper)
   container.append(icon, tooltip)
 
@@ -128,7 +149,8 @@ function createControlContainer(): HTMLElement {
   })
   container.addEventListener('click', (event) => {
     event.preventDefault()
-    event.stopPropagation()
+    // B 站在 window 的 click 监听器中更新播放器焦点，需让点击继续冒泡。
+    // 否则移出视频区后，上下方向键、回车等原生快捷键可能失效。
     void handleControlClick(container)
   })
   container.addEventListener('keydown', (event) => {
@@ -137,6 +159,8 @@ function createControlContainer(): HTMLElement {
 
     event.preventDefault()
     event.stopPropagation()
+    if (event.repeat)
+      return
     void handleControlClick(container)
   })
 
@@ -148,7 +172,7 @@ async function handleControlClick(button: HTMLElement) {
     return
 
   if (isBewlyWidescreenActive()) {
-    exitBewlyWidescreen()
+    exitBewlyWidescreen({ userInitiated: true })
     updateControlState(button)
     return
   }
@@ -254,7 +278,6 @@ function observePlayerStructure(playerRoot: HTMLElement, controlBar: HTMLElement
       return
     }
 
-    updateControlState()
     if (!playerRoot.isConnected) {
       stopPlayerObservers()
       restartControlDiscovery()
@@ -272,17 +295,6 @@ function observePlayerStructure(playerRoot: HTMLElement, controlBar: HTMLElement
     if (current === playerRoot)
       break
     current = current.parentElement
-  }
-
-  // Web fullscreen is represented by a class on the native control. Watching
-  // that small set of nodes keeps the custom control unavailable while it is
-  // active without observing the entire page for attribute mutations.
-  const modeButtons = Array.from(controlBar.querySelectorAll<HTMLElement>(PLAYER_MODE_BUTTON_SELECTOR))
-  for (const modeButton of modeButtons) {
-    playerStructureObserver.observe(modeButton, {
-      attributes: true,
-      attributeFilter: ['class'],
-    })
   }
 
   const playerParent = playerRoot.parentElement
@@ -321,6 +333,7 @@ function syncControl() {
   if (existingControl) {
     controlContainer = existingControl
     updateControlState()
+    schedulePlayerControlFit(existingControl)
     stopControlDiscovery()
     return
   }
@@ -338,6 +351,7 @@ function syncControl() {
   controlContainer = createControlContainer()
   anchor.insertAdjacentElement('afterend', controlContainer)
   updateControlState()
+  schedulePlayerControlFit(controlContainer)
   stopControlDiscovery()
 }
 
@@ -347,7 +361,7 @@ function setupPageObserver() {
 
   pageObserver = new MutationObserver(() => {
     if (isApplying && (isBewlyWidescreenActive()
-      || !document.getElementById('bewly-widescreen-loading'))) {
+      || !isBewlyWidescreenEngaged())) {
       finishApplying()
     }
 
@@ -370,6 +384,16 @@ export function initBewlyWidescreenControl() {
   hasInitialized = true
   ensureNativePlayerModeGuard()
   setupPageObserver()
+  watch(
+    [() => settings.value.showBewlyWidescreenButton, () => settings.value.language],
+    ([enabled]) => {
+      if (enabled)
+        restartControlDiscovery()
+      else
+        stopManagingControl()
+    },
+    { immediate: true },
+  )
 
   const handlePageLifecycleChange = () => restartControlDiscovery()
   window.addEventListener('pushstate', handlePageLifecycleChange)
@@ -377,12 +401,8 @@ export function initBewlyWidescreenControl() {
   window.addEventListener('popstate', handlePageLifecycleChange)
   window.addEventListener('hashchange', handlePageLifecycleChange)
   window.addEventListener('pageshow', handlePageLifecycleChange)
-  window.addEventListener('fullscreenchange', () => updateControlState())
-  window.addEventListener('webkitfullscreenchange', () => updateControlState())
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible')
+    if (document.visibilityState === 'visible' && settings.value.showBewlyWidescreenButton)
       restartControlDiscovery()
   })
-
-  restartControlDiscovery()
 }

@@ -41,43 +41,6 @@ const API_VIDEO = {
     params: WEB_RECOMMEND_PARAMS,
     afterHandle: AHS.J_D,
   },
-  getAppRecommendVideos: {
-    url: 'https://app.bilibili.com/x/v2/feed/index',
-    _fetch: {
-      method: 'get',
-    },
-    params: {
-      build: 74800100,
-      device: 'pad',
-      mobi_app: 'iphone',
-      c_locate: 'CN',
-      s_locale: 'zh-CN',
-      idx: 0,
-      appkey: '27eb53fc9058f8c3',
-      access_key: '',
-    },
-    afterHandle: AHS.J_D,
-  },
-  // https://github.com/indefined/UserScripts/blob/master/bilibiliHome/bilibiliHome.API.md#%E6%8F%90%E4%BA%A4%E4%B8%8D%E5%96%9C%E6%AC%A2
-  dislikeVideo: {
-    url: 'https://app.bilibili.com/x/feed/dislike',
-    _fetch: {
-      method: 'get',
-    },
-    params: {
-      access_key: '',
-      goto: '',
-      id: 0 as number | string,
-      reason_id: undefined as number | undefined,
-      feedback_id: undefined as number | undefined,
-      mobi_app: 'android',
-      build: 1,
-      appkey: '',
-      ts: '',
-      sign: '',
-    },
-    afterHandle: AHS.J_D,
-  },
   webDislikeVideo: {
     url: 'https://api.bilibili.com/x/web-interface/feedback/dislike',
     _fetch: {
@@ -98,26 +61,6 @@ const API_VIDEO = {
         reason_id: 1,
         csrf: '',
       },
-    },
-    afterHandle: AHS.J_D,
-  },
-  // https://github.com/indefined/UserScripts/blob/master/bilibiliHome/bilibiliHome.API.md#%E6%92%A4%E9%94%80%E4%B8%8D%E5%96%9C%E6%AC%A2
-  undoDislikeVideo: {
-    url: 'https://app.bilibili.com/x/feed/dislike/cancel',
-    _fetch: {
-      method: 'get',
-    },
-    params: {
-      access_key: '',
-      goto: '',
-      id: 0 as number | string,
-      reason_id: undefined as number | undefined,
-      feedback_id: undefined as number | undefined,
-      mobi_app: 'android',
-      build: 1,
-      appkey: '',
-      ts: '',
-      sign: '',
     },
     afterHandle: AHS.J_D,
   },

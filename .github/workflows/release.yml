@@ -1,0 +1,49 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    name: Build and publish Safari extension
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: |
+            - args: [--frozen-lockfile]
+
+      - name: Build Safari Extension
+        run: pnpm build-safari
+
+      # 压缩整个目录，解压后得到 extension-safari/ 文件夹，可直接在扩展构建器中添加
+      - name: Pack Safari Extension
+        run: zip -r -X extension-safari.zip extension-safari
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BewlyCat-safari-extension
+          path: extension-safari
+
+      - name: Publish GitHub Release
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: extension-safari.zip
+          generate_release_notes: true

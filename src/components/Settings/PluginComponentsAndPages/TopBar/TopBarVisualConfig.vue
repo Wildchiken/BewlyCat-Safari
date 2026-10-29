@@ -1,21 +1,32 @@
 <script lang="ts" setup>
 import { useI18n } from 'vue-i18n'
 
-import bilibiliBrandLogoUrl from '~/assets/branding/bilibili-brand-logo.png'
+import bilibiliBrandLogoUrl from '~/assets/branding/bilibili-wordmark.png'
 import Button from '~/components/Button.vue'
 import Radio from '~/components/Radio.vue'
 import Select from '~/components/Select.vue'
 import { VideoPageTopBarConfig } from '~/enums/appEnums'
 import { settings } from '~/logic'
 import type { TopBarStyle } from '~/logic/storage'
+import type { NotificationBadgeSettings } from '~/utils/notificationBadge'
 
-import { allChannelConfigs } from '../../../TopBar/constants/channels'
 import SettingsItem from '../../components/SettingsItem.vue'
 import SettingsItemGroup from '../../components/SettingsItemGroup.vue'
+import PinnedChannelsManager from './PinnedChannelsManager.vue'
 
 const { t } = useI18n()
 
 type BadgeType = 'number' | 'dot' | 'none'
+type NotificationBadgeType = keyof NotificationBadgeSettings
+
+const notificationTypes: { key: NotificationBadgeType, title: string }[] = [
+  { key: 'showReplyNotificationReminder', title: 'topbar.noti_dropdown.replys' },
+  { key: 'showAtNotificationReminder', title: 'topbar.noti_dropdown.mentions' },
+  { key: 'showLikeNotificationReminder', title: 'topbar.noti_dropdown.likes' },
+  { key: 'showSystemNotificationReminder', title: 'topbar.noti_dropdown.messages' },
+  { key: 'showFollowedPrivateMessageUnreadCount', title: 'settings.notification_followed_private_messages' },
+  { key: 'showUnfollowedPrivateMessageUnreadCount', title: 'settings.notification_unfollowed_private_messages' },
+]
 
 interface TopBarComponent {
   key: string
@@ -35,13 +46,13 @@ const topBarComponents = computed<TopBarComponent[]>(() => [
     key: 'favorites',
     i18nKey: 'topbar.favorites',
     icon: 'i-mingcute:star-line',
-    supportsBadge: true,
+    supportsBadge: false,
   },
   {
     key: 'history',
     i18nKey: 'topbar.history',
     icon: 'i-mingcute:time-line',
-    supportsBadge: true,
+    supportsBadge: false,
   },
   {
     key: 'watchLater',
@@ -67,6 +78,12 @@ const topBarComponents = computed<TopBarComponent[]>(() => [
     icon: 'i-tabler:bell',
     supportsBadge: true,
   },
+  {
+    key: 'topBarSwitcher',
+    i18nKey: 'topbar.top_bar_switcher',
+    icon: 'i-mingcute:refresh-2-line',
+    supportsBadge: false,
+  },
 ])
 
 const badgeOptions = computed(() => [
@@ -82,10 +99,21 @@ const videoPageTopBarConfigOptions = computed(() => [
   { label: t('settings.video_page_top_bar_config_opt.showOnScroll'), value: VideoPageTopBarConfig.ShowOnScroll },
 ])
 
+const otherPageTopBarConfigOptions = computed(() => videoPageTopBarConfigOptions.value
+  .filter(option => option.value !== VideoPageTopBarConfig.AlwaysHide))
+
 const topBarStyleOptions = computed<{ label: string, value: TopBarStyle }[]>(() => [
   { label: t('settings.top_bar_style_opt.default'), value: 'default' },
-  { label: t('settings.top_bar_style_opt.transparent'), value: 'transparent' },
   { label: t('settings.top_bar_style_opt.frosted_glass'), value: 'frostedGlass' },
+  { label: t('settings.top_bar_style_opt.transparent'), value: 'transparent' },
+  { label: t('settings.top_bar_style_opt.exp_default'), value: 'expDefault' },
+  { label: t('settings.top_bar_style_opt.exp_frosted_glass'), value: 'expFrostedGlass' },
+  { label: t('settings.top_bar_style_opt.exp_transparent'), value: 'expTransparent' },
+])
+
+const topBarModeOptions = computed(() => [
+  { label: t('settings.top_bar_mode_opt.original'), value: true },
+  { label: t('settings.top_bar_mode_opt.bewly'), value: false },
 ])
 
 function createDefaultComponentConfig(component: TopBarComponent) {
@@ -125,53 +153,14 @@ function setComponentVisibility(componentKey: string, visible: boolean) {
     config.visible = visible
 }
 
-function setComponentBadgeType(componentKey: string, badgeType: BadgeType) {
+function setComponentBadgeType(componentKey: string, badgeValue: BadgeType) {
   const config = getComponentConfig(componentKey)
   if (config)
-    config.badgeType = badgeType
+    config.badgeType = badgeValue
 }
 
 ensureTopBarComponentsConfig()
 watch(topBarComponents, ensureTopBarComponentsConfig, { immediate: true })
-
-function resetPinnedChannels() {
-  settings.value.topBarPinnedChannels = []
-}
-
-interface ChannelOption {
-  value: string
-  label: string
-  icon: string
-  color?: string
-}
-
-const channelOptions = computed<ChannelOption[]>(() => {
-  return allChannelConfigs.map((config) => {
-    return {
-      value: config.key,
-      label: t(config.nameKey),
-      icon: config.icon,
-      color: config.color,
-    }
-  })
-})
-
-const pinnedChannelKeys = computed(() => settings.value.topBarPinnedChannels)
-
-const pinnedIndexMap = computed(() => {
-  const map = new Map<string, number>()
-  pinnedChannelKeys.value.forEach((key, index) => {
-    map.set(key, index + 1)
-  })
-  return map
-})
-
-function toggleChannel(value: string) {
-  if (pinnedChannelKeys.value.includes(value))
-    settings.value.topBarPinnedChannels = pinnedChannelKeys.value.filter(key => key !== value)
-  else
-    settings.value.topBarPinnedChannels = [...pinnedChannelKeys.value, value]
-}
 </script>
 
 <template>
@@ -200,13 +189,6 @@ function toggleChannel(value: string) {
         <Radio v-model="settings.enableTopBar" :label="settings.enableTopBar ? $t('settings.chk_box.show') : $t('settings.chk_box.hidden')" />
       </SettingsItem>
       <SettingsItem
-        :title="$t('settings.use_original_bilibili_topbar')"
-        :desc="$t('settings.use_original_bilibili_topbar_desc')"
-        right-width="auto"
-      >
-        <Radio v-model="settings.useOriginalBilibiliTopBar" :disabled="!settings.enableTopBar" />
-      </SettingsItem>
-      <SettingsItem
         v-if="!settings.touchScreenOptimization"
         :title="$t('settings.open_top_bar_items_in_bewly')"
         :desc="$t('settings.open_top_bar_items_in_bewly_desc')"
@@ -214,8 +196,12 @@ function toggleChannel(value: string) {
       >
         <Radio v-model="settings.openTopBarItemsInBewly" />
       </SettingsItem>
-      <SettingsItem :title="$t('settings.auto_hide_top_bar')" right-width="auto">
-        <Radio v-model="settings.autoHideTopBar" />
+      <SettingsItem
+        :title="$t('settings.other_page_top_bar_config')"
+        :desc="$t('settings.other_page_top_bar_config_desc')"
+        right-width="auto"
+      >
+        <Select v-model="settings.otherPageTopBarConfig" :options="otherPageTopBarConfigOptions" w="160px" />
       </SettingsItem>
       <SettingsItem
         :title="$t('settings.video_page_top_bar_config')"
@@ -226,6 +212,13 @@ function toggleChannel(value: string) {
       </SettingsItem>
       <SettingsItem :title="$t('settings.open_notifications_page_as_drawer')" right-width="auto">
         <Radio v-model="settings.openNotificationsPageAsDrawer" />
+      </SettingsItem>
+      <SettingsItem
+        :title="$t('settings.filter_articles_in_moments')"
+        :desc="$t('settings.filter_articles_in_moments_desc')"
+        right-width="auto"
+      >
+        <Radio v-model="settings.filterArticlesInMoments" />
       </SettingsItem>
     </SettingsItemGroup>
 
@@ -326,6 +319,20 @@ function toggleChannel(value: string) {
     </SettingsItemGroup>
 
     <SettingsItemGroup
+      :title="$t('settings.notification_badge_types')"
+      :desc="$t('settings.notification_badge_types_desc')"
+    >
+      <SettingsItem
+        v-for="type in notificationTypes"
+        :key="type.key"
+        :title="$t(type.title)"
+        right-width="auto"
+      >
+        <Radio v-model="settings[type.key]" />
+      </SettingsItem>
+    </SettingsItemGroup>
+
+    <SettingsItemGroup
       :title="$t('settings.topbar_actions')"
       :desc="$t('settings.topbar_actions_desc')"
     >
@@ -342,7 +349,16 @@ function toggleChannel(value: string) {
           </span>
         </template>
         <div class="topbar-component-controls">
-          <div v-if="component.supportsBadge" class="topbar-component-control topbar-component-control--badge">
+          <div v-if="component.key === 'topBarSwitcher'" class="topbar-component-control topbar-component-control--mode">
+            <span class="topbar-component-control__label">{{ $t('settings.top_bar_mode') }}</span>
+            <Select
+              v-model="settings.useOriginalBilibiliTopBar"
+              :options="topBarModeOptions"
+              :disabled="!settings.enableTopBar"
+              w="160px"
+            />
+          </div>
+          <div v-else-if="component.supportsBadge" class="topbar-component-control topbar-component-control--badge">
             <span class="topbar-component-control__label">{{ $t('settings.badge_type') }}</span>
             <Select
               :model-value="getComponentConfig(component.key)?.badgeType ?? 'number'"
@@ -360,21 +376,6 @@ function toggleChannel(value: string) {
             />
           </div>
         </div>
-      </SettingsItem>
-
-      <SettingsItem
-        :title="$t('settings.show_like_notification_reminder')"
-        :desc="$t('settings.show_like_notification_reminder_desc')"
-        right-width="auto"
-      >
-        <Radio v-model="settings.showLikeNotificationReminder" />
-      </SettingsItem>
-      <SettingsItem
-        :title="$t('settings.filter_articles_in_moments')"
-        :desc="$t('settings.filter_articles_in_moments_desc')"
-        right-width="auto"
-      >
-        <Radio v-model="settings.filterArticlesInMoments" />
       </SettingsItem>
 
       <div class="topbar-section-actions">
@@ -402,53 +403,7 @@ function toggleChannel(value: string) {
       :desc="$t('settings.topbar_pinned_channels_desc')"
       icon="i-tabler:pin-filled"
     >
-      <SettingsItem :title="$t('settings.topbar_pinned_channels_title')">
-        <template #title>
-          <div class="topbar-item-title-with-action">
-            <span>{{ $t('settings.topbar_pinned_channels_title') }}</span>
-            <Button
-              size="small"
-              type="secondary"
-              :disabled="!pinnedChannelKeys.length"
-              @click="resetPinnedChannels"
-            >
-              <template #left>
-                <div i-mingcute:back-line />
-              </template>
-              {{ $t('common.operation.reset') }}
-            </Button>
-          </div>
-        </template>
-
-        <template #bottom>
-          <div class="channel-grid">
-            <button
-              v-for="option in channelOptions"
-              :key="option.value"
-              type="button"
-              class="channel-grid__item"
-              :class="{ selected: pinnedChannelKeys.includes(option.value) }"
-              @click="toggleChannel(option.value)"
-            >
-              <div v-if="option.icon.startsWith('#')" class="channel-grid__icon">
-                <svg aria-hidden="true">
-                  <use :xlink:href="option.icon" />
-                </svg>
-              </div>
-              <div v-else class="channel-grid__icon">
-                <i :class="option.icon" :style="{ color: option.color ?? '' }" />
-              </div>
-              <span class="channel-grid__label">{{ option.label }}</span>
-              <span v-if="pinnedIndexMap.has(option.value)" class="channel-grid__overlay">
-                {{ pinnedIndexMap.get(option.value) }}
-              </span>
-            </button>
-          </div>
-          <div class="channel-grid__tip">
-            {{ pinnedChannelKeys.length ? $t('settings.topbar_pinned_channels_order_tip') : $t('settings.topbar_pinned_channels_empty') }}
-          </div>
-        </template>
-      </SettingsItem>
+      <PinnedChannelsManager />
     </SettingsItemGroup>
   </div>
 </template>
@@ -537,116 +492,6 @@ function toggleChannel(value: string) {
     -webkit-mask-repeat: no-repeat;
     -webkit-mask-size: contain;
   }
-}
-
-.channel-grid {
-  // 32px icon + 12px gap + 24px horizontal padding + 2px border + four CJK glyphs.
-  --channel-grid-min-item-width: calc(
-    var(--bew-icon-size-xl) + var(--bew-space-3) + var(--bew-space-6) + var(--bew-space-0-5) + 4em
-  );
-
-  display: grid;
-  gap: var(--bew-space-3);
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--channel-grid-min-item-width)), 1fr));
-  width: 100%;
-  grid-auto-flow: row dense;
-  font-size: var(--bew-font-size-control);
-}
-
-.channel-grid__item {
-  position: relative;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: var(--bew-space-3);
-  min-width: 0;
-  min-height: var(--bew-control-height);
-  padding: var(--bew-space-3);
-  border: 1px solid transparent;
-  border-radius: var(--bew-interactive-radius);
-  background: var(--bew-fill-1);
-  color: var(--bew-text-1);
-  cursor: pointer;
-  text-align: left;
-  transition:
-    background-color var(--bew-duration-normal) var(--bew-ease-standard),
-    border-color var(--bew-duration-normal) var(--bew-ease-standard),
-    color var(--bew-duration-normal) var(--bew-ease-standard),
-    transform var(--bew-duration-normal) var(--bew-ease-emphasized);
-
-  &:hover {
-    background: var(--bew-fill-2);
-    transform: translateY(-2px);
-  }
-
-  &:focus-visible {
-    outline: 2px solid var(--bew-theme-color-60);
-    outline-offset: var(--bew-space-0-5);
-  }
-
-  &.selected {
-    border-color: var(--bew-theme-color-30);
-    background: color-mix(in oklab, var(--bew-theme-color-20), transparent 35%);
-    color: var(--bew-theme-color);
-    transform: none;
-
-    &:hover {
-      background: color-mix(in oklab, var(--bew-theme-color-20), transparent 20%);
-    }
-  }
-}
-
-.channel-grid__icon {
-  display: grid;
-  width: var(--bew-icon-size-xl);
-  height: var(--bew-icon-size-xl);
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid color-mix(in oklab, var(--bew-border-color), transparent 30%);
-  border-radius: var(--bew-interactive-radius);
-  background: color-mix(in oklab, white, transparent 20%);
-
-  svg {
-    width: var(--bew-icon-size-lg);
-    height: var(--bew-icon-size-lg);
-  }
-
-  i {
-    font-size: var(--bew-icon-size-lg);
-  }
-}
-
-.channel-grid__label {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  font-size: var(--bew-font-size-control);
-  font-weight: var(--bew-font-weight-medium);
-  line-height: var(--bew-line-height-control);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.channel-grid__overlay {
-  display: grid;
-  width: var(--bew-icon-size-md);
-  height: var(--bew-icon-size-md);
-  flex: 0 0 auto;
-  place-items: center;
-  border-radius: var(--bew-badge-radius);
-  background: var(--bew-theme-color);
-  color: var(--bew-text-auto);
-  font-size: var(--bew-font-size-control);
-  font-weight: var(--bew-font-weight-semibold);
-  line-height: var(--bew-line-height-control);
-  pointer-events: none;
-}
-
-.channel-grid__tip {
-  margin-top: var(--bew-space-3);
-  color: var(--bew-text-3);
-  font-size: var(--bew-font-size-control);
-  line-height: var(--bew-line-height-control);
 }
 
 @media (max-width: 640px) {

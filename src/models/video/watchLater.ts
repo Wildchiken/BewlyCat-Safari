@@ -23,10 +23,19 @@ export interface List {
   desc: string
   state: number
   duration: number
+  redirect_url?: string
+  bangumi?: {
+    ep_id?: number
+    cover?: string
+    season?: {
+      season_id?: number
+      title?: string
+    }
+  }
   rights: { [key: string]: number }
   owner: Owner
   stat: { [key: string]: number }
-  dynamic: Dynamic
+  dynamic: string
   dimension: Dimension
   short_link_v2: string
   up_from_v2?: number
@@ -69,11 +78,6 @@ export interface Dimension {
   width: number
   height: number
   rotate: number
-}
-
-export enum Dynamic {
-  Empty = '',
-  后期鸽看了看自己暗淡无光的羽毛又看了看你们手里闪闪发光的硬币 = '后期鸽看了看自己暗淡无光的羽毛，又看了看你们手里闪闪发光的硬币',
 }
 
 export interface Owner {

@@ -16,14 +16,27 @@ export const CONTENT_SCRIPT_MATCHES = CONTENT_SCRIPT_HOSTS.map(host => `*://${ho
 export const CONTENT_SCRIPT_EXCLUDE_MATCHES = [
   '*://www.bilibili.com/match/game*',
   '*://www.bilibili.com/toy*',
+  // B 站顶栏在每个页面隐藏加载的未读数同步框架，注入后会让每个标签页多一套存储监听与后台请求。
+  '*://message.bilibili.com/pages/nav/*',
+  '*://t.bilibili.com/pages/nav/*',
 ]
 
 export const CONTENT_SCRIPT_PING = 'bewly-cat:content-script:ping'
 export const CONTENT_SCRIPT_PONG = 'bewly-cat:content-script:ready'
+export const REFRESH_ALL_CONTENT_SCRIPT_TABS = 'bewly-cat:content-script:refresh-all-tabs'
+// manifest 生成脚本也会直接导入本模块，此时尚未注入编译常量。
+export const CONTENT_SCRIPT_COMMIT = typeof __BUILD_COMMIT__ === 'undefined' ? undefined : (__BUILD_COMMIT__ || undefined)
 
-export interface ContentScriptPong {
-  type: typeof CONTENT_SCRIPT_PONG
+export interface ContentScriptIdentity {
+  name: string
+  runtimeUrl: string
   version: string
+  // 开发模式的后台和页面脚本独立编译，Git 提交仅用于诊断，不代表协议或版本不兼容。
+  commit?: string
+}
+
+export interface ContentScriptPong extends ContentScriptIdentity {
+  type: typeof CONTENT_SCRIPT_PONG
 }
 
 export function isContentScriptPong(value: unknown): value is ContentScriptPong {
@@ -32,8 +45,13 @@ export function isContentScriptPong(value: unknown): value is ContentScriptPong 
 
   const pong = value as Record<string, unknown>
   return pong.type === CONTENT_SCRIPT_PONG
+    && typeof pong.name === 'string'
+    && pong.name.length > 0
+    && typeof pong.runtimeUrl === 'string'
+    && pong.runtimeUrl.length > 0
     && typeof pong.version === 'string'
     && pong.version.length > 0
+    && (pong.commit === undefined || (typeof pong.commit === 'string' && /^[\da-f]{40,64}$/i.test(pong.commit)))
 }
 
 const CONTENT_SCRIPT_HOST_SET = new Set<string>(CONTENT_SCRIPT_HOSTS)

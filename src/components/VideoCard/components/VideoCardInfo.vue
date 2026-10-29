@@ -5,8 +5,9 @@ import { settings } from '~/logic'
 import { calcTimeSince, numFormatter } from '~/utils/dataFormatter'
 
 import VideoWatchedTag from '../../VideoWatchedTag.vue'
+import { vMetaOverflow } from '../directives/metaOverflow'
 import type { Video } from '../types'
-import { getTagSearchUrl } from '../utils'
+import { getTagSearchUrl, hasAuthorAvatar } from '../utils'
 import VideoCardAuthorAvatar from '../VideoCardAuthor/components/VideoCardAuthorAvatar.vue'
 import VideoCardAuthorName from '../VideoCardAuthor/components/VideoCardAuthorName.vue'
 
@@ -22,8 +23,11 @@ interface Props {
   titleStyle: Record<string, string | number>
   authorFontSizeClass: string
   metaFontSizeClass: string
-  highlightTags: string[]
+  pluginComputedTags: string[]
   hideAuthor?: boolean
+  hideWatchedBadge?: boolean
+  /** 信息较少的卡片（如 App 推荐无头像、无发布时间）将 UP 主与标签合并为单行 */
+  compactMeta?: boolean
 }
 
 const props = defineProps<Props>()
@@ -32,34 +36,54 @@ const emit = defineEmits<{
   moreBtnClick: [event: MouseEvent]
 }>()
 
-const moreBtnRef = ref<HTMLDivElement | null>(null)
+const moreBtnRef = ref<HTMLButtonElement | null>(null)
 
 defineExpose({
   moreBtnRef,
 })
 
-const MAX_LEADING_TAG_COUNT = 2
+const MAX_INTERFACE_TAG_COUNT = 4
+const MIN_TAG_COUNT_BEFORE_PLUGIN = 2
+
+// 空间不足时按 data-meta-priority 隐藏：时间(0) 始终保留，接口标签(2)、计算标签(3) 中先隐藏最宽的，分区(1) 最后隐藏
+interface VideoCardTag {
+  priority: 1 | 2
+  searchable: boolean
+  text: string
+}
 
 // 将卡片内容开关集中到单个响应式计算，避免每张卡片为同一组设置创建大量 computed。
 const content = computed(() => {
   const video = props.video
   const currentSettings = settings.value
   const rawTag = video?.tag
-  const primaryTags = !rawTag
+  const displayTags = !rawTag
     ? []
     : Array.isArray(rawTag)
       ? rawTag.filter(Boolean)
       : [rawTag]
-  const visiblePrimaryTags = currentSettings.showVideoCardVideoTag
-    ? primaryTags.slice(0, MAX_LEADING_TAG_COUNT)
-    : []
-  const remainingHighlightCount = MAX_LEADING_TAG_COUNT - visiblePrimaryTags.length
-  const visibleHighlightTags = currentSettings.showVideoCardRecommendTag && remainingHighlightCount > 0
-    ? props.highlightTags.slice(0, remainingHighlightCount)
+  // 分区与其他接口标签分开控制，分区始终排在最前
+  const cardTags: VideoCardTag[] = [
+    ...(currentSettings.showVideoCardCategory && video?.category
+      ? [{ priority: 1 as const, searchable: true, text: video.category }]
+      : []),
+    ...(currentSettings.showVideoCardVideoTag
+      ? [
+          ...displayTags.map(text => ({ priority: 2 as const, searchable: false, text })),
+          ...(video?.searchableTags ?? [])
+            .filter(Boolean)
+            .map(text => ({ priority: 2 as const, searchable: true, text })),
+        ]
+      : []),
+  ]
+  const visibleVideoTags = cardTags.slice(0, MAX_INTERFACE_TAG_COUNT)
+  const remainingPluginTagCount = Math.max(0, MIN_TAG_COUNT_BEFORE_PLUGIN - visibleVideoTags.length)
+  const visiblePluginComputedTags = currentSettings.showVideoCardRecommendTag && remainingPluginTagCount > 0
+    ? props.pluginComputedTags.slice(0, remainingPluginTagCount)
     : []
   const authorAvatarEnabled = !props.hideAuthor && currentSettings.showVideoCardAuthorAvatar
   const authorNameEnabled = !props.hideAuthor && currentSettings.showVideoCardAuthorName
-  const showAuthorAvatar = authorAvatarEnabled && Boolean(video?.author)
+  const showAuthorAvatar = authorAvatarEnabled && hasAuthorAvatar(video?.author)
   const showAuthorName = authorNameEnabled && Boolean(video?.author)
   const showPublishTime = currentSettings.showVideoCardPublishTime
     && (Boolean(video?.publishedTimestamp) || Boolean(video?.capsuleText))
@@ -68,14 +92,15 @@ const content = computed(() => {
     && (Boolean(video?.view) || Boolean(video?.viewStr))
   const showLegacyDanmakuCount = currentSettings.showVideoCardDanmakuCount
     && (Boolean(video?.danmaku) || Boolean(video?.danmakuStr))
-  const metaPlaceholderEnabled = currentSettings.showVideoCardVideoTag
+  const metaPlaceholderEnabled = currentSettings.showVideoCardCategory
+    || currentSettings.showVideoCardVideoTag
     || currentSettings.showVideoCardRecommendTag
     || currentSettings.showVideoCardPublishTime
     || Boolean(video?.type)
   const statsPlaceholderEnabled = currentSettings.showVideoCardViewCount
     || currentSettings.showVideoCardDanmakuCount
-  const hasVisibleMeta = visiblePrimaryTags.length > 0
-    || visibleHighlightTags.length > 0
+  const hasVisibleMeta = visibleVideoTags.length > 0
+    || visiblePluginComputedTags.length > 0
     || showPublishTime
     || showVideoType
 
@@ -84,6 +109,7 @@ const content = computed(() => {
     authorNameEnabled,
     hasLegacyStats: showLegacyViewCount || showLegacyDanmakuCount,
     hasVisibleMeta,
+    isCompactMeta: props.layout === 'modern' && !!props.compactMeta && showAuthorName,
     isModernLayout: props.layout === 'modern',
     metaPlaceholderEnabled,
     showAuthorAvatar,
@@ -92,10 +118,10 @@ const content = computed(() => {
     showLegacyViewCount,
     showPublishTime,
     showVideoType,
-    showWatchedBadge: currentSettings.showVideoWatchedBadge && !video?.roomid,
+    showWatchedBadge: !props.hideWatchedBadge && currentSettings.showVideoWatchedBadge && !video?.roomid,
     statsPlaceholderEnabled,
-    visibleHighlightTags,
-    visiblePrimaryTags,
+    visiblePluginComputedTags,
+    visibleVideoTags,
   }
 })
 </script>
@@ -122,7 +148,10 @@ const content = computed(() => {
         shrink-0
       />
 
-      <div class="group/desc" flex="~ col" :class="content.isModernLayout ? 'gap-2' : ''" w="full" align="items-start">
+      <div
+        class="group/desc" flex="~ col" :class="content.isModernLayout ? 'gap-2' : ''" w="full" min-w-0
+        align="items-start"
+      >
         <!-- Title skeleton -->
         <div flex="~ gap-1 justify-between items-start" w="full">
           <!-- 使用与真实标题完全相同的样式和高度 -->
@@ -130,9 +159,12 @@ const content = computed(() => {
             class="keep-two-lines" :class="[
               content.isModernLayout && moreBtn ? 'w-[calc(100%-40px)]' : 'w-full',
               content.isModernLayout ? 'video-card-title' : '',
+              // Same font size as the real title: the two-line height is in em,
+              // so a larger skeleton font made each row jump when cards arrived.
+              titleFontSizeClass,
             ]"
             :style="titleStyle"
-            text="overflow-ellipsis $bew-text-1 lg"
+            text="overflow-ellipsis $bew-text-1"
           >
             <!-- 使用与真实文本相同的行高填充，考虑 line-height -->
             <div w-full bg="$bew-skeleton" rounded="$bew-radius-sm" style="height: 1em; margin-bottom: calc((var(--bew-title-line-height, 1.35) - 1) * 0.5em);" />
@@ -144,9 +176,30 @@ const content = computed(() => {
           />
         </div>
 
+        <!-- Modern compact layout: Author & tags in one row skeleton -->
+        <div
+          v-if="layout === 'modern' && compactMeta && content.authorNameEnabled"
+          class="video-card-meta video-card-meta--compact"
+          flex="~ gap-2 items-center"
+          w="full"
+        >
+          <div
+            v-if="content.authorNameEnabled"
+            w="30%" bg="$bew-skeleton" rounded="$bew-radius-sm"
+            :class="authorFontSizeClass"
+            style="height: 1em;"
+          />
+          <div
+            v-if="content.metaPlaceholderEnabled"
+            w="30%" bg="$bew-skeleton" rounded="$bew-radius-sm"
+            :class="metaFontSizeClass"
+            style="height: calc(1em + 0.24em);"
+          />
+        </div>
+
         <!-- Modern layout: Author info skeleton -->
         <div
-          v-if="layout === 'modern' && (content.authorAvatarEnabled || content.authorNameEnabled)"
+          v-else-if="layout === 'modern' && (content.authorAvatarEnabled || content.authorNameEnabled)"
           class="video-card-meta"
           flex="~ gap-2 items-center"
           w="full"
@@ -259,7 +312,10 @@ const content = computed(() => {
         :is-live="video.liveStatus === 1"
       />
 
-      <div class="group/desc" flex="~ col" :class="content.isModernLayout ? 'gap-2' : ''" w="full" align="items-start">
+      <div
+        class="group/desc" flex="~ col" :class="content.isModernLayout ? 'gap-2' : ''" w="full" min-w-0
+        align="items-start"
+      >
         <div flex="~ gap-1 justify-between items-start" w="full" pos="relative">
           <h3
             :class="[
@@ -282,9 +338,11 @@ const content = computed(() => {
             </a>
           </h3>
 
-          <div
+          <button
             v-if="moreBtn"
             ref="moreBtnRef"
+            type="button"
+            :aria-label="$t('video_card.operation.more_options')"
             class="video-card__more-btn"
             data-layout-edit-target="video-card-more"
             data-layout-settings-menu="BewlyComponents"
@@ -296,52 +354,25 @@ const content = computed(() => {
             ]"
             bg="hover:$bew-fill-2 active:$bew-fill-3"
             shrink-0 w-32px h-32px m="t--3px"
-            grid place-items-center cursor-pointer rounded="50%"
+            grid place-items-center cursor-pointer rounded="50%" border-none
             @click.stop.prevent="emit('moreBtnClick', $event)"
           >
             <div i-mingcute:more-2-line text="lg" />
-          </div>
+          </button>
         </div>
 
         <!-- Modern layout with hideAuthor: Tags directly under title -->
         <div
           v-if="layout === 'modern' && !content.showAuthorAvatar && !content.showAuthorName && content.hasVisibleMeta"
+          v-meta-overflow
           class="video-card-meta-row"
           flex="~ items-center gap-2 wrap"
           :class="metaFontSizeClass"
         >
-          <a
-            v-for="primaryTag in content.visiblePrimaryTags"
-            :key="`primary-${primaryTag}`"
-            class="video-card-meta__chip"
-            un-text="$bew-theme-color"
-            p="x-2"
-            lh-6
-            rounded="$bew-radius"
-            bg="$bew-theme-color-20 hover:$bew-theme-color-30"
-            :href="getTagSearchUrl(primaryTag)"
-            target="_blank"
-            @click.stop=""
-          >
-            {{ primaryTag }}
-          </a>
-
-          <span
-            v-for="extraTag in content.visibleHighlightTags"
-            :key="`highlight-${extraTag}`"
-            class="video-card-meta__chip"
-            text="$bew-theme-color"
-            p="x-2"
-            lh-6
-            rounded="$bew-radius"
-            bg="$bew-theme-color-20"
-          >
-            {{ extraTag }}
-          </span>
-
           <span
             v-if="content.showPublishTime"
             class="video-card-meta__chip"
+            data-meta-priority="0"
             bg="$bew-fill-1"
             p="x-2"
             lh-6
@@ -349,6 +380,40 @@ const content = computed(() => {
             text="$bew-text-3"
           >
             {{ video.publishedTimestamp ? calcTimeSince(video.publishedTimestamp * 1000) : video.capsuleText?.trim() }}
+          </span>
+
+          <component
+            :is="videoTag.searchable ? 'a' : 'span'"
+            v-for="videoTag in content.visibleVideoTags"
+            :key="`video-${videoTag.searchable}-${videoTag.text}`"
+            class="video-card-meta__chip"
+            :data-meta-priority="videoTag.priority"
+            :class="{ 'video-card-tag--searchable': videoTag.searchable }"
+            un-text="$bew-theme-color"
+            p="x-2"
+            lh-6
+            rounded="$bew-radius"
+            bg="$bew-theme-color-20"
+            :title="videoTag.text"
+            :href="videoTag.searchable ? getTagSearchUrl(videoTag.text) : undefined"
+            :target="videoTag.searchable ? '_blank' : undefined"
+            @click="videoTag.searchable ? $event.stopPropagation() : undefined"
+          >
+            {{ videoTag.text }}
+          </component>
+
+          <span
+            v-for="pluginTag in content.visiblePluginComputedTags"
+            :key="`plugin-${pluginTag}`"
+            data-meta-priority="3"
+            class="video-card-meta__chip"
+            text="$bew-theme-color"
+            p="x-2"
+            lh-6
+            rounded="$bew-radius"
+            bg="$bew-theme-color-20"
+          >
+            {{ pluginTag }}
           </span>
 
           <span
@@ -365,6 +430,7 @@ const content = computed(() => {
         <div
           v-if="layout === 'modern' && (content.showAuthorAvatar || content.showAuthorName)"
           class="video-card-meta"
+          :class="{ 'video-card-meta--compact': content.isCompactMeta }"
           flex="~ gap-2 items-center"
           w="full"
         >
@@ -375,9 +441,15 @@ const content = computed(() => {
             compact
           />
 
-          <div v-if="content.showAuthorName || content.hasVisibleMeta" flex="~ col gap-1" w="full">
+          <div
+            v-if="content.showAuthorName || content.hasVisibleMeta"
+            :class="content.isCompactMeta ? 'flex items-center gap-2' : 'flex flex-col gap-1'"
+            w="full" min-w-0
+          >
             <div
               v-if="content.showAuthorName"
+              class="video-card-meta__author"
+              min-w-0
               flex="~ items-center gap-2"
               text="$bew-text-2"
               :class="authorFontSizeClass"
@@ -387,42 +459,15 @@ const content = computed(() => {
 
             <div
               v-if="content.hasVisibleMeta"
+              v-meta-overflow
               class="video-card-meta-row"
               flex="~ items-center gap-2 wrap"
               :class="metaFontSizeClass"
             >
-              <a
-                v-for="primaryTag in content.visiblePrimaryTags"
-                :key="`primary-${primaryTag}`"
-                class="video-card-meta__chip"
-                un-text="$bew-theme-color"
-                p="x-2"
-                lh-6
-                rounded="$bew-radius"
-                bg="$bew-theme-color-20 hover:$bew-theme-color-30"
-                :href="getTagSearchUrl(primaryTag)"
-                target="_blank"
-                @click.stop=""
-              >
-                {{ primaryTag }}
-              </a>
-
-              <span
-                v-for="extraTag in content.visibleHighlightTags"
-                :key="`highlight-${extraTag}`"
-                class="video-card-meta__chip"
-                text="$bew-theme-color"
-                p="x-2"
-                lh-6
-                rounded="$bew-radius"
-                bg="$bew-theme-color-20"
-              >
-                {{ extraTag }}
-              </span>
-
               <span
                 v-if="content.showPublishTime"
                 class="video-card-meta__chip"
+                data-meta-priority="0"
                 bg="$bew-fill-1"
                 p="x-2"
                 lh-6
@@ -430,6 +475,40 @@ const content = computed(() => {
                 text="$bew-text-3"
               >
                 {{ video.publishedTimestamp ? calcTimeSince(video.publishedTimestamp * 1000) : video.capsuleText?.trim() }}
+              </span>
+
+              <component
+                :is="videoTag.searchable ? 'a' : 'span'"
+                v-for="videoTag in content.visibleVideoTags"
+                :key="`video-${videoTag.searchable}-${videoTag.text}`"
+                class="video-card-meta__chip"
+                :data-meta-priority="videoTag.priority"
+                :class="{ 'video-card-tag--searchable': videoTag.searchable }"
+                un-text="$bew-theme-color"
+                p="x-2"
+                lh-6
+                rounded="$bew-radius"
+                bg="$bew-theme-color-20"
+                :title="videoTag.text"
+                :href="videoTag.searchable ? getTagSearchUrl(videoTag.text) : undefined"
+                :target="videoTag.searchable ? '_blank' : undefined"
+                @click="videoTag.searchable ? $event.stopPropagation() : undefined"
+              >
+                {{ videoTag.text }}
+              </component>
+
+              <span
+                v-for="pluginTag in content.visiblePluginComputedTags"
+                :key="`plugin-${pluginTag}`"
+                data-meta-priority="3"
+                class="video-card-meta__chip"
+                text="$bew-theme-color"
+                p="x-2"
+                lh-6
+                rounded="$bew-radius"
+                bg="$bew-theme-color-20"
+              >
+                {{ pluginTag }}
               </span>
 
               <span
@@ -449,35 +528,44 @@ const content = computed(() => {
           <!-- Old layout with hideAuthor: Only tags -->
           <div
             v-if="hideAuthor && content.hasVisibleMeta"
+            v-meta-overflow
             class="video-card-meta-row"
             mt-2
             flex="~ gap-1 wrap"
             :class="metaFontSizeClass"
           >
             <!-- Tag -->
-            <a
-              v-for="primaryTag in content.visiblePrimaryTags"
-              :key="`legacy-primary-${primaryTag}`"
-              un-text="$bew-theme-color" lh-6 p="x-2" rounded="$bew-radius" bg="$bew-theme-color-20 hover:$bew-theme-color-30"
-              :href="getTagSearchUrl(primaryTag)"
-              target="_blank"
-              @click.stop=""
+            <component
+              :is="videoTag.searchable ? 'a' : 'span'"
+              v-for="videoTag in content.visibleVideoTags"
+              :key="`legacy-video-${videoTag.searchable}-${videoTag.text}`"
+              class="video-card-meta__chip"
+              :data-meta-priority="videoTag.priority"
+              :class="{ 'video-card-tag--searchable': videoTag.searchable }"
+              un-text="$bew-theme-color" lh-6 p="x-2" rounded="$bew-radius" bg="$bew-theme-color-20"
+              :title="videoTag.text"
+              :href="videoTag.searchable ? getTagSearchUrl(videoTag.text) : undefined"
+              :target="videoTag.searchable ? '_blank' : undefined"
+              @click="videoTag.searchable ? $event.stopPropagation() : undefined"
             >
-              {{ primaryTag }}
-            </a>
+              {{ videoTag.text }}
+            </component>
             <span
-              v-for="extraTag in content.visibleHighlightTags"
-              :key="`highlight-${extraTag}`"
+              v-for="pluginTag in content.visiblePluginComputedTags"
+              :key="`plugin-${pluginTag}`"
+              data-meta-priority="3"
+              class="video-card-meta__chip"
               text="$bew-theme-color"
               lh-6
               p="x-2"
               rounded="$bew-radius"
               bg="$bew-theme-color-20"
             >
-              {{ extraTag }}
+              {{ pluginTag }}
             </span>
             <span
               v-if="content.showPublishTime"
+              data-meta-priority="0"
               bg="$bew-fill-1" p="x-2" rounded="$bew-radius" text="$bew-text-3" lh-6
               mr-1
             >
@@ -495,9 +583,9 @@ const content = computed(() => {
             <div
               v-if="content.showAuthorName || (horizontal && content.showAuthorAvatar)"
               text="$bew-text-2"
-              w-fit
+              w-fit min-w-0 max-w-full
               m="t-2"
-              flex="~ items-center wrap"
+              flex="~ items-center"
               :class="authorFontSizeClass"
             >
               <!-- Author Avatar (horizontal mode) -->
@@ -506,6 +594,7 @@ const content = computed(() => {
                   marginBottom: horizontal ? '0.5rem' : '0',
                 }"
                 flex="inline items-center"
+                min-w-0 max-w-full
               >
                 <VideoCardAuthorAvatar
                   v-if="horizontal && content.showAuthorAvatar && video.author"
@@ -531,7 +620,7 @@ const content = computed(() => {
                   {{ video.view ? $t('common.view', { count: numFormatter(video.view) }, video.view) : `${numFormatter(video.viewStr || '0')}${$t('common.viewWithoutNum')}` }}
                 </span>
                 <template v-if="content.showLegacyDanmakuCount">
-                  <span v-if="content.showLegacyViewCount" text-xs font-light mx-4px>•</span>
+                  <span v-if="content.showLegacyViewCount" class="video-card-stat-separator" text-xs mx-1>•</span>
                   <span>{{ video.danmaku ? $t('common.danmaku', { count: numFormatter(video.danmaku) }, video.danmaku) : `${numFormatter(video.danmakuStr || '0')}${$t('common.danmakuWithoutNum')}` }}</span>
                 </template>
                 <br>
@@ -540,35 +629,44 @@ const content = computed(() => {
 
             <div
               v-if="content.hasVisibleMeta"
+              v-meta-overflow
               class="video-card-meta-row"
               mt-2
               flex="~ gap-1 wrap"
               :class="metaFontSizeClass"
             >
               <!-- Tag -->
-              <a
-                v-for="primaryTag in content.visiblePrimaryTags"
-                :key="`legacy-primary-${primaryTag}`"
-                un-text="$bew-theme-color" lh-6 p="x-2" rounded="$bew-radius" bg="$bew-theme-color-20 hover:$bew-theme-color-30"
-                :href="getTagSearchUrl(primaryTag)"
-                target="_blank"
-                @click.stop=""
+              <component
+                :is="videoTag.searchable ? 'a' : 'span'"
+                v-for="videoTag in content.visibleVideoTags"
+                :key="`legacy-video-${videoTag.searchable}-${videoTag.text}`"
+                class="video-card-meta__chip"
+                :data-meta-priority="videoTag.priority"
+                :class="{ 'video-card-tag--searchable': videoTag.searchable }"
+                un-text="$bew-theme-color" lh-6 p="x-2" rounded="$bew-radius" bg="$bew-theme-color-20"
+                :title="videoTag.text"
+                :href="videoTag.searchable ? getTagSearchUrl(videoTag.text) : undefined"
+                :target="videoTag.searchable ? '_blank' : undefined"
+                @click="videoTag.searchable ? $event.stopPropagation() : undefined"
               >
-                {{ primaryTag }}
-              </a>
+                {{ videoTag.text }}
+              </component>
               <span
-                v-for="extraTag in content.visibleHighlightTags"
-                :key="`highlight-${extraTag}`"
+                v-for="pluginTag in content.visiblePluginComputedTags"
+                :key="`plugin-${pluginTag}`"
+                data-meta-priority="3"
+                class="video-card-meta__chip"
                 text="$bew-theme-color"
                 lh-6
                 p="x-2"
                 rounded="$bew-radius"
                 bg="$bew-theme-color-20"
               >
-                {{ extraTag }}
+                {{ pluginTag }}
               </span>
               <span
                 v-if="content.showPublishTime"
+                data-meta-priority="0"
                 bg="$bew-fill-1" p="x-2" rounded="$bew-radius" text="$bew-text-3" lh-6
                 mr-1
               >
@@ -588,9 +686,15 @@ const content = computed(() => {
 </template>
 
 <style lang="scss" scoped>
+.video-card-stat-separator {
+  font-weight: var(--bew-font-weight-regular);
+}
+
 .video-card-title {
   &.keep-two-lines {
     min-height: calc(var(--bew-title-line-height, 1.35) * 2em);
+    // 字号类同时设置了行高，按实际行高保留两行，单行标题下方的信息才能与两行标题对齐
+    min-height: 2lh;
   }
   &.keep-one-line {
     min-height: auto;
@@ -625,15 +729,40 @@ const content = computed(() => {
   min-width: 0;
 }
 
+// 单行布局：只占一行高度并顶部对齐，UP 主名最多占一半宽度，其余留给标签
+.video-card-meta--compact {
+  min-height: 24px;
+  max-height: 24px;
+}
+
+.video-card-meta--compact .video-card-meta__author {
+  flex: 0 1 auto;
+  max-width: 50%;
+
+  &:only-child {
+    max-width: 100%;
+  }
+
+  :deep(.channel-name) {
+    margin-right: 0;
+  }
+}
+
+.video-card-meta--compact .video-card-meta-row {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
 .video-card-meta > div:last-child > div:last-child {
-  flex-wrap: nowrap;
   overflow: hidden;
   max-width: 100%;
 }
 
 .video-card-meta-row {
+  align-content: flex-start;
   flex-wrap: nowrap;
   overflow: hidden;
+  width: 100%;
   max-width: 100%;
   min-height: 24px;
   max-height: 24px;
@@ -645,11 +774,14 @@ const content = computed(() => {
   font-size: inherit;
   line-height: inherit;
   padding-block: calc(var(--bew-base-font-size) * 0.12);
+}
+
+.video-card-meta-row > * {
   flex: 0 0 auto;
-  max-width: 100%;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.video-card-tag--searchable:hover {
+  background: var(--bew-theme-color-30);
 }
 </style>

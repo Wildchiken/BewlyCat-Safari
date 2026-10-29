@@ -3,21 +3,25 @@ import { watch } from 'vue'
 import { settings } from '~/logic'
 import { i18n } from '~/utils/i18n'
 import { isVideoOrBangumiPage, isVideoPlaybackPage } from '~/utils/main'
-import { showState } from '~/utils/player'
+import { captureVideoScreenshot } from '~/utils/videoScreenshot'
+
+import { schedulePlayerControlFit } from './playerControlFit'
 
 const PLAYER_CONTROL_BAR_SELECTOR = '.bpx-player-control-bottom-right'
 const PLAYER_ROOT_SELECTOR = '#playerWrap, #bilibili-player, #bilibiliPlayer, .bpx-player-container, .bilibili-player'
+const TOOLTIP_CLASS = 'bewly-player-tooltip'
 const CONTROL_DISCOVERY_TIMEOUT = 15_000
 const CONTROL_DISCOVERY_RETRY_INTERVAL = 500
 
+// 与原生控制栏 Lottie 图标同为 88 网格面性图形：主体 72×56、圆角 8、镂空宽 8
 const screenshotIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 88 88" style="width: 100%; height: 100%;">
-  <path d="M25 29h9l4-6h12l4 6h9a6 6 0 0 1 6 6v26a6 6 0 0 1-6 6H25a6 6 0 0 1-6-6V35a6 6 0 0 1 6-6Z" fill="none" stroke="#fff" stroke-width="5" stroke-linejoin="round"/>
-  <circle cx="44" cy="48" r="11" fill="none" stroke="#fff" stroke-width="5"/>
+  <path d="M16 24h12l4.2-6.3A4 4 0 0 1 35.5 16h17a4 4 0 0 1 3.3 1.7L60 24h12a8 8 0 0 1 8 8v32a8 8 0 0 1-8 8H16a8 8 0 0 1-8-8V32a8 8 0 0 1 8-8ZM29 48a15 15 0 1 0 30 0a15 15 0 1 0 -30 0Z" fill="#fff" fill-rule="evenodd"/>
+  <circle class="bewly-video-screenshot-icon-lens" cx="44" cy="48" r="7" fill="#fff"/>
+  <path class="bewly-video-screenshot-icon-flash" d="M77 3Q78 11 86 12Q78 13 77 21Q76 13 68 12Q76 11 77 3Z" fill="#fff" opacity="0"/>
 </svg>`
 
 let controlContainer: HTMLElement | null = null
 let hasInitialized = false
-let isCapturing = false
 let observedPlayerRoot: HTMLElement | null = null
 let observedControlBar: HTMLElement | null = null
 let playerStructureObserver: MutationObserver | null = null
@@ -44,111 +48,6 @@ function shouldManageControl() {
     && (isVideoPlaybackPage() || isVideoOrBangumiPage())
 }
 
-function findCurrentVideo(trigger: HTMLElement): HTMLVideoElement | null {
-  const player = trigger.closest('.bpx-player-container, #bilibili-player, .bilibili-player')
-  const videos = Array.from((player || document).querySelectorAll<HTMLVideoElement>('video'))
-    .filter(video => video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0)
-
-  return videos.find(video => !video.paused && !video.ended)
-    || videos.find(video => video.getClientRects().length > 0)
-    || videos[0]
-    || null
-}
-
-function getVideoTitle(): string {
-  const titleElement = document.querySelector<HTMLElement>('h1.video-title, .video-title, #player-title, .season-info .title')
-  const title = titleElement?.getAttribute('title')
-    || titleElement?.textContent
-    || document.querySelector<HTMLMetaElement>('meta[itemprop="name"], meta[property="og:title"]')?.content
-    || document.title
-  const titleWithoutControlCharacters = Array.from(title, character => character.charCodeAt(0) < 32 ? '_' : character).join('')
-
-  return titleWithoutControlCharacters
-    .replace(/_哔哩哔哩_bilibili$/, '')
-    .replace(/[<>:"/\\|?*]/g, '_')
-    .replace(/\s+/g, ' ')
-    .replace(/[.\s]+$/g, '')
-    .slice(0, 120)
-    || 'bilibili-video'
-}
-
-function formatFrameTime(currentTime: number): string {
-  const totalMilliseconds = Number.isFinite(currentTime)
-    ? Math.max(0, Math.floor(currentTime * 1000))
-    : 0
-  const milliseconds = totalMilliseconds % 1000
-  const totalSeconds = Math.floor(totalMilliseconds / 1000)
-  const seconds = totalSeconds % 60
-  const totalMinutes = Math.floor(totalSeconds / 60)
-  const minutes = totalMinutes % 60
-  const hours = Math.floor(totalMinutes / 60)
-
-  return [hours, minutes, seconds]
-    .map(value => String(value).padStart(2, '0'))
-    .join('-')
-    .concat(`-${String(milliseconds).padStart(3, '0')}`)
-}
-
-function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob)
-        resolve(blob)
-      else
-        reject(new Error('Canvas conversion returned an empty image'))
-    }, 'image/png')
-  })
-}
-
-async function captureCurrentFrame(trigger: HTMLElement) {
-  if (isCapturing)
-    return
-
-  const video = findCurrentVideo(trigger)
-  if (!video) {
-    showState(translate('player_screenshot.video_unavailable'))
-    return
-  }
-
-  isCapturing = true
-  trigger.setAttribute('aria-busy', 'true')
-  trigger.style.opacity = '0.5'
-
-  try {
-    const capturedTime = video.currentTime
-    const canvas = document.createElement('canvas')
-    canvas.width = video.videoWidth
-    canvas.height = video.videoHeight
-
-    const context = canvas.getContext('2d')
-    if (!context)
-      throw new Error('Canvas 2D context is unavailable')
-
-    context.drawImage(video, 0, 0, canvas.width, canvas.height)
-    const blob = await canvasToBlob(canvas)
-    const objectUrl = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = objectUrl
-    link.download = `${getVideoTitle()}_${formatFrameTime(capturedTime)}.png`
-    link.style.display = 'none'
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000)
-
-    showState(translate('player_screenshot.saved'))
-  }
-  catch (error) {
-    console.error('[BewlyCat] 视频帧截图失败', error)
-    showState(translate('player_screenshot.failed'))
-  }
-  finally {
-    isCapturing = false
-    trigger.removeAttribute('aria-busy')
-    trigger.style.removeProperty('opacity')
-  }
-}
-
 function createControlContainer(): HTMLElement {
   const container = document.createElement('div')
   const label = translate('player_screenshot.capture')
@@ -156,7 +55,11 @@ function createControlContainer(): HTMLElement {
   container.setAttribute('role', 'button')
   container.setAttribute('aria-label', label)
   container.setAttribute('tabindex', '0')
-  container.title = label
+
+  const tooltip = document.createElement('span')
+  tooltip.className = TOOLTIP_CLASS
+  tooltip.setAttribute('role', 'tooltip')
+  tooltip.textContent = label
 
   const icon = document.createElement('div')
   icon.className = 'bpx-player-ctrl-btn-icon bewly-video-screenshot-icon'
@@ -165,21 +68,21 @@ function createControlContainer(): HTMLElement {
   iconWrapper.className = 'bpx-common-svg-icon'
   iconWrapper.innerHTML = screenshotIcon
   icon.appendChild(iconWrapper)
-  container.appendChild(icon)
+  container.append(icon, tooltip)
 
   // 鼠标点击不聚焦按钮：否则焦点残留，之后按空格/回车会再次触发截图
   container.addEventListener('mousedown', (event) => {
     event.preventDefault()
   })
   container.addEventListener('click', () => {
-    void captureCurrentFrame(container)
+    void captureVideoScreenshot(container)
   })
   container.addEventListener('keydown', (event) => {
     if (event.key !== 'Enter' && event.key !== ' ')
       return
 
     event.preventDefault()
-    void captureCurrentFrame(container)
+    void captureVideoScreenshot(container)
   })
 
   return container
@@ -316,6 +219,7 @@ function syncControl() {
   const existingControl = controlBar.querySelector<HTMLElement>('.bewly-video-screenshot-control')
   if (existingControl) {
     controlContainer = existingControl
+    schedulePlayerControlFit(existingControl)
     stopControlDiscovery()
     return
   }
@@ -328,6 +232,7 @@ function syncControl() {
 
   controlContainer = createControlContainer()
   anchor.insertAdjacentElement('afterend', controlContainer)
+  schedulePlayerControlFit(controlContainer)
   stopControlDiscovery()
 }
 

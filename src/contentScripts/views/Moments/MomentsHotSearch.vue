@@ -2,12 +2,9 @@
 import { storeToRefs } from 'pinia'
 
 import ALink from '~/components/ALink.vue'
-import { settings } from '~/logic'
 import { useTopBarStore } from '~/stores/topBarStore'
 import api from '~/utils/api'
-import { isHomePage } from '~/utils/main'
-import { buildKeywordSearchUrl, navigateToPluginSearchResults } from '~/utils/searchNavigation'
-import { openLinkInBackground } from '~/utils/tabs'
+import { buildKeywordSearchUrl, navigateToPluginSearchResultsInPlace, openSearchResults } from '~/utils/searchNavigation'
 
 interface HotSearchItem {
   keyword: string
@@ -26,22 +23,10 @@ function handleHotSearchClick(keyword: string) {
     return
 
   searchKeyword.value = normalized
-  if (navigateToPluginSearchResults(normalized))
+  if (navigateToPluginSearchResultsInPlace(normalized))
     return
 
-  const searchUrl = buildKeywordSearchUrl(normalized)
-  if (settings.value.searchBarLinkOpenMode === 'background') {
-    void openLinkInBackground(searchUrl)
-    return
-  }
-
-  let target = '_blank'
-  if (settings.value.searchBarLinkOpenMode === 'currentTabIfNotHomepage')
-    target = isHomePage() ? '_blank' : '_self'
-  else if (settings.value.searchBarLinkOpenMode === 'currentTab')
-    target = '_self'
-
-  window.open(searchUrl, target)
+  openSearchResults(normalized)
 }
 
 async function loadHotSearch() {
@@ -66,10 +51,10 @@ onMounted(loadHotSearch)
 </script>
 
 <template>
-  <section class="moments-hot-search" aria-label="热搜">
+  <section class="moments-hot-search" :aria-label="$t('search_bar.hot_search_title')">
     <header class="moments-hot-search__header">
       <span i-tabler-flame aria-hidden="true" />
-      <strong>{{ $t('search_bar.hot_search_title') || '热搜' }}</strong>
+      <strong>{{ $t('search_bar.hot_search_title') }}</strong>
     </header>
 
     <div v-if="isLoading && !list.length" class="moments-hot-search__list" aria-hidden="true">
@@ -111,7 +96,7 @@ onMounted(loadHotSearch)
 .moments-hot-search {
   overflow: auto;
   overscroll-behavior: contain;
-  padding: var(--bew-space-3);
+  padding: var(--bew-space-4);
   border-radius: var(--bew-panel-radius);
   background: var(--bew-elevated);
   scrollbar-width: thin;
@@ -209,7 +194,7 @@ onMounted(loadHotSearch)
 .moments-hot-search__skeleton {
   display: block;
   height: 18px;
-  margin: 7px var(--bew-space-2);
+  margin: var(--bew-space-2);
   border-radius: var(--bew-radius-sm);
   background: var(--bew-skeleton-color, var(--bew-fill-2));
 }

@@ -1,5 +1,7 @@
 import md5 from 'md5'
 
+import { withRequestTimeout } from './requestTimeout'
+
 // WBI签名重排映射表
 const MIXIN_KEY_ENC_TAB = [46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52]
 
@@ -147,7 +149,7 @@ export function addWbiSign(params: Record<string, any>, options: WbiKeyOptions =
 
   // 添加时间戳
   const wts = Math.round(Date.now() / 1000)
-  const signParams = { ...params, wts }
+  const signParams: Record<string, any> = { ...params, wts }
 
   // 按键名升序排序
   const sortedKeys = Object.keys(signParams).sort()
@@ -219,25 +221,28 @@ export async function initWbiKeys(options: WbiKeyOptions = {}): Promise<boolean>
   // 开始新的获取流程
   const fetchPromise = (async () => {
     try {
-      // 获取B站cookie
-      const cookieStr = noCookie ? '' : await getBilibiliCookies()
+      // Cookie API 也可能在后台繁忙时挂起，必须计入整个初始化的超时预算，
+      // 否则共享 Promise 会一直占用，后续搜索永远等不到一次新的密钥请求。
+      const navData = await withRequestTimeout(async (signal) => {
+        const cookieStr = noCookie ? '' : await getBilibiliCookies()
+        signal.throwIfAborted()
 
-      const headers: HeadersInit = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.bilibili.com/',
-      }
+        const headers: HeadersInit = {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Referer': 'https://www.bilibili.com/',
+        }
 
-      // 如果有cookie，添加到请求头
-      if (cookieStr) {
-        headers.Cookie = cookieStr
-      }
+        if (cookieStr)
+          headers.Cookie = cookieStr
 
-      const navResponse = await fetch('https://api.bilibili.com/x/web-interface/nav', {
-        method: 'GET',
-        headers,
-        credentials: noCookie ? 'omit' : 'include',
+        const navResponse = await fetch('https://api.bilibili.com/x/web-interface/nav', {
+          method: 'GET',
+          headers,
+          credentials: noCookie ? 'omit' : 'include',
+          signal,
+        })
+        return navResponse.json()
       })
-      const navData = await navResponse.json()
 
       // 无论是否登录，nav接口都应该返回wbi_img
       if (navData.code === 0 && navData.data && navData.data.wbi_img) {

@@ -1,51 +1,63 @@
-* {
+// This bundle is also injected into the native document. Generic rules must
+// stay inside our UI or pages that explicitly enable style adaptation.
+:where(.bewly-wrapper, .bewly-wrapper *, .bewly-design, .bewly-design *) {
   outline-color: var(--bew-theme-color-80);
   font-feature-settings: "tnum";
   // outline-width: 2px;
   // outline-offset: 2px;
 }
 
-.dark {
+:host(.dark),
+.bewly-wrapper.dark,
+.bewly-design.dark {
   input,
   textarea {
     color-scheme: dark;
   }
 }
 
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
+:host,
+:host *,
+:where(.bewly-wrapper, .bewly-wrapper *, .bewly-design, .bewly-design *) {
+  &::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
 
-::-webkit-scrollbar-track {
-  background: transparent;
-}
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
 
-html.bewly-design > ::-webkit-scrollbar-track {
-  background: var(--bew-bg);
-}
+  &::-webkit-scrollbar-thumb {
+    background-color: rgba(120, 120, 140, 0.44);
+    border-radius: var(--bew-radius-full);
+  }
 
-::-webkit-scrollbar-thumb {
-  background-color: rgba(120, 120, 140, 0.44);
-  border-radius: var(--bew-radius-full);
-}
-
-::-webkit-scrollbar-corner {
-  background: transparent;
+  &::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 }
 
 :host,
-:root {
+:root.bewly-design {
   scrollbar-width: thin;
   scrollbar-color: rgba(120, 120, 140, 0.44) transparent;
 }
 
 html.bewly-design,
 .bewly-design body {
-  min-width: unset !important;
   filter: none !important;
   color: var(--bew-text-1);
   background-image: none;
+}
+
+html.bewly-custom-homepage > body {
+  background-color: unset !important;
+  transition: opacity 0.5s;
+}
+
+html.bewly-design > ::-webkit-scrollbar-track {
+  background: var(--bew-bg);
 }
 
 .dark.bewly-design body,
@@ -53,8 +65,15 @@ html.dark.bewly-design {
   background-color: var(--bew-bg) !important;
 }
 
-.bewly-design *::selection,
-.bewly-wrapper *::selection {
+// Highlight inheritance lets one rule on the root color every descendant's
+// selection. A universal `*::selection` made each style recalculation (class
+// toggles, inserted card rows) recompute a selection style per element, about
+// half of its cost; browsers without highlight inheritance get the fallback
+// class from `supportsHighlightInheritance()`.
+.bewly-design::selection,
+.bewly-wrapper::selection,
+.bewly-design.bewly-selection-fallback *::selection,
+.bewly-wrapper.bewly-selection-fallback *::selection {
   background: color-mix(in oklab, var(--bew-theme-color-60), var(--bew-bg, white) 20%) !important;
   color: revert !important;
 }
@@ -66,7 +85,7 @@ html.dark.bewly-design {
 }
 
 // Adjust broken image icon
-img:not(.pswp__img) {
+.bewly-wrapper img:not(.pswp__img) {
   position: relative;
 
   &::before {
@@ -96,6 +115,22 @@ img:not(.pswp__img) {
     font-size: var(--bew-font-size-heading);
     font-weight: var(--bew-font-weight-bold);
     line-height: var(--bew-line-height-heading);
+  }
+
+  .bew-section-heading {
+    font-size: var(--bew-font-size-heading);
+    font-weight: var(--bew-font-weight-medium);
+    line-height: var(--bew-line-height-heading);
+  }
+
+  .bew-card-title-text {
+    font-size: var(--bew-font-size-title);
+    line-height: var(--bew-line-height-title);
+  }
+
+  .bew-body-text {
+    font-size: var(--bew-font-size-body);
+    line-height: var(--bew-line-height-body);
   }
 
   // Baseline keyboard feedback for legacy/raw controls. Component-specific
@@ -136,6 +171,21 @@ img:not(.pswp__img) {
     @supports (corner-shape: superellipse(1.5)) {
       border-radius: var(--bew-card-continuous-radius);
       corner-shape: var(--bew-card-corner-shape);
+    }
+  }
+
+  // 头部操作统一提供可点击反馈，尺寸与排版仍由各弹窗控制。
+  .bew-top-bar-pop-action {
+    transition: color var(--bew-duration-fast) var(--bew-ease-standard);
+
+    &:hover:not(:disabled) {
+      color: var(--bew-theme-color);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bew-top-bar-pop-action {
+      transition: none;
     }
   }
 
@@ -186,14 +236,17 @@ img:not(.pswp__img) {
   .bew-top-bar-media-copy {
     min-width: 0;
     flex: 1 1 auto;
-    font-size: var(--bew-top-bar-media-title-size);
-    line-height: var(--bew-top-bar-media-title-line-height);
+    // 作者等次级文字继承的基准字号；标题自身使用 media-title 的独立字号
+    font-size: var(--bew-font-size-control);
+    line-height: var(--bew-line-height-control);
   }
 
   .bew-top-bar-media-title {
     overflow: hidden;
     display: -webkit-box;
     line-break: anywhere;
+    font-size: var(--bew-top-bar-media-title-size);
+    line-height: var(--bew-top-bar-media-title-line-height);
     font-weight: var(--bew-top-bar-media-title-weight);
     text-overflow: ellipsis;
     -webkit-box-orient: vertical;
@@ -201,13 +254,13 @@ img:not(.pswp__img) {
     line-clamp: 2;
   }
 
-  .bew-top-bar-media-title--emphasis {
-    font-size: var(--bew-top-bar-media-title-emphasis-size);
-    line-height: var(--bew-top-bar-media-title-emphasis-line-height);
-  }
-
   .bew-top-bar-media-author {
     font-weight: var(--bew-top-bar-media-author-weight);
+    transition: color var(--bew-duration-fast) var(--bew-ease-standard);
+
+    &:hover {
+      color: var(--bew-theme-color);
+    }
   }
 
   .bew-top-bar-media-author--compact {
@@ -315,6 +368,259 @@ img:not(.pswp__img) {
   border-radius: var(--bew-popover-surface-radius);
   box-shadow: var(--bew-shadow-2);
   backdrop-filter: var(--bew-filter-glass-1);
+}
+
+.bew-popover-surface--wallpaper {
+  background: var(--bew-popover-wallpaper-background);
+}
+
+// 锚定浮层（三点菜单、编辑器面板等）共享的进出动画：淡入 + 缩放 + 毛玻璃同步插值。
+// 用独立的 scale 属性而非 transform，避免覆盖浮层自身的定位变换（如 translateY）。
+// Chromium 在 opacity/transform 动画期间会丢弃 backdrop-filter（crbug.com/40877283），
+// 故玻璃与缩放同步插值到恒等滤镜，避免动画结束才出现毛玻璃。
+.bew-pop-enter-active,
+.bew-pop-leave-active {
+  transition:
+    opacity var(--bew-duration-fast) var(--bew-ease-standard),
+    scale var(--bew-duration-fast) var(--bew-ease-standard),
+    backdrop-filter var(--bew-duration-fast) var(--bew-ease-standard);
+}
+
+.bew-pop-enter-from,
+.bew-pop-leave-to {
+  --bew-pop-glass: blur(0px) saturate(100%);
+
+  opacity: 0;
+  scale: 0.9;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bew-pop-enter-active,
+  .bew-pop-leave-active {
+    transition: none;
+  }
+}
+
+// 页面控件只在自身范围内采样背景；不再依赖工具栏背后的一整块底板。
+.bew-toolbar-controls .b-input,
+.bew-toolbar-controls .select-trigger,
+.bew-toolbar-controls .bew-toolbar-note {
+  color: var(--bew-text-1);
+  background: var(--bew-control-surface-background);
+  box-shadow: var(--bew-control-surface-edge);
+  backdrop-filter: var(--bew-control-surface-filter);
+  -webkit-backdrop-filter: var(--bew-control-surface-filter);
+}
+
+.bew-toolbar-controls .b-input:hover,
+.bew-toolbar-controls .select-trigger:hover:not(.is-disabled) {
+  background: var(--bew-control-surface-hover);
+}
+
+.bew-toolbar-controls .b-input:focus-within {
+  outline: 2px solid var(--bew-theme-color);
+  outline-offset: var(--bew-space-0-5);
+}
+
+.bew-toolbar-controls .b-button.b-button--type-secondary,
+.bew-toolbar-controls .b-button.b-button--type-tertiary {
+  --b-button-color: var(--bew-control-surface-background);
+  --b-button-color-hover: var(--bew-control-surface-hover);
+  --b-button-shadow: var(--bew-control-surface-edge);
+
+  backdrop-filter: var(--bew-control-surface-filter);
+  -webkit-backdrop-filter: var(--bew-control-surface-filter);
+}
+
+// 同一行的输入框、选择器和按钮使用相同外框高度，边框和 padding 都计入其中。
+.bew-toolbar-controls .b-input.b-input--medium,
+.bew-toolbar-controls .b-button.b-button--size-medium,
+.bew-toolbar-controls .select-trigger,
+.bew-toolbar-controls .bew-toolbar-note {
+  box-sizing: border-box;
+  height: var(--bew-control-height);
+  min-height: var(--bew-control-height);
+  padding-block: 0;
+  border-radius: var(--bew-interactive-radius);
+}
+
+.bew-toolbar-controls .b-input.b-input--medium input,
+.bew-toolbar-controls .select-trigger {
+  font-size: var(--bew-font-size-control);
+  line-height: var(--bew-line-height-control);
+}
+
+.bew-toolbar-controls .b-input.b-input--medium input {
+  box-sizing: border-box;
+  height: 100%;
+  padding: 0;
+  border: 0;
+}
+
+.bew-toolbar-controls .b-input input::placeholder {
+  color: var(--bew-control-surface-muted);
+  opacity: 1;
+}
+
+.bew-toolbar-controls .bew-toolbar-note {
+  display: inline-flex;
+  align-items: center;
+  padding-inline: var(--bew-space-3);
+}
+
+.bew-page-sidebar {
+  box-sizing: border-box;
+  border-radius: var(--bew-panel-radius);
+}
+
+.bew-page-sidebar .bew-page-nav-item {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: var(--bew-control-height);
+  padding: var(--bew-space-2) var(--bew-space-3);
+  border-radius: var(--bew-interactive-radius);
+  color: var(--bew-text-1);
+  background: transparent;
+  font-size: var(--bew-font-size-control);
+  font-weight: var(--bew-font-weight-medium);
+  line-height: var(--bew-line-height-control);
+  text-align: start;
+  cursor: pointer;
+  transition:
+    background-color var(--bew-duration-fast) var(--bew-ease-standard),
+    box-shadow var(--bew-duration-fast) var(--bew-ease-standard);
+
+  &:hover:not(:disabled):not([data-active="true"]) {
+    background: var(--bew-fill-2);
+  }
+
+  &:active:not(:disabled):not([data-active="true"]) {
+    background: var(--bew-fill-3);
+  }
+
+  &[data-active="true"] {
+    color: var(--bew-text-auto);
+    background: var(--bew-theme-color-auto);
+    box-shadow: var(--bew-shadow-2);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--bew-theme-color-auto);
+    outline-offset: var(--bew-space-0-5);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+// 高度自适应展开/收起：grid 轨道 0fr→1fr 过渡，无需 JS 测量内容高度。
+// 挂载后先停在 0fr，由调用方在内容就绪后添加 .is-entered 播放展开动画。
+.bew-expand-host {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--bew-duration-normal) var(--bew-ease-standard);
+
+  > * {
+    min-height: 0;
+    overflow: hidden;
+  }
+}
+
+.bew-expand-host.is-entered {
+  grid-template-rows: 1fr;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bew-expand-host {
+    transition: none;
+  }
+}
+
+// 浮层/面板内的轻量幽灵按钮：透明底，悬停浅填充并染主题色，按下加深，禁用半透明。
+// 工具图标仍用 bew-segment-control__item，主操作仍用 Button 组件，三者构成统一按钮词汇。
+.bew-ghost-button {
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--bew-space-1);
+  min-height: 32px;
+  min-width: 32px;
+  padding: var(--bew-space-1) var(--bew-space-2);
+  border: 0;
+  border-radius: var(--bew-interactive-radius);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: background-color var(--bew-duration-fast) var(--bew-ease-standard);
+
+  &:hover,
+  &[aria-selected="true"],
+  &[aria-pressed="true"] {
+    background: var(--bew-fill-2);
+  }
+
+  &:active {
+    background: var(--bew-fill-3);
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+
+// 主题色悬停变体：底色与文字同以主题色系共变（避免灰底配主题色文字的可读性问题），
+// 用于卡片表面的轻按钮（评论区操作等）；按下态仅保留主题色文字、不加底色。
+.bew-ghost-button--theme {
+  transition:
+    background-color var(--bew-duration-fast) var(--bew-ease-standard),
+    color var(--bew-duration-fast) var(--bew-ease-standard);
+
+  &:hover,
+  &:active {
+    color: var(--bew-theme-color);
+    background: var(--bew-theme-color-10);
+  }
+
+  &[aria-pressed="true"] {
+    color: var(--bew-theme-color);
+    background: transparent;
+  }
+}
+
+// 提交中的加载环：绝对居中盖在按钮上、文字原位隐藏（visibility 保留宽度），
+// 按钮常态无多余留白、提交时尺寸不变。宿主按钮需 position: relative。
+.bew-submit-spinner {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: bew-submit-spin 0.7s linear infinite;
+}
+
+.bew-submit-label.is-hidden {
+  visibility: hidden;
+}
+
+@keyframes bew-submit-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bew-submit-spinner {
+    animation-duration: 1.4s;
+  }
 }
 
 .bew-settings-option--lift {

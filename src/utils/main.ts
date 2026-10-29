@@ -1,3 +1,5 @@
+import { stripBilibiliLocaleUrl } from '~/utils/bilibiliLocale'
+
 /**
  * Get cookie by name
  * @param name cookie name
@@ -18,11 +20,11 @@ export function getCookie(name: string): string {
  * @param name cookie name
  * @param value cookie value
  */
-export function setCookie(name: string, value: any, expDays: number) {
+export function setCookie(name: string, value: string, expDays: number) {
   const date = new Date()
   date.setTime(date.getTime() + expDays * 24 * 60 * 60 * 1000)
   const expires = `expires=${date.toUTCString()}`
-  document.cookie = `${name}=${value}; ${expires}; domain=.bilibili.com; path=/`
+  document.cookie = `${name}=${encodeURIComponent(value)}; ${expires}; domain=.bilibili.com; path=/`
 }
 
 /**
@@ -125,13 +127,41 @@ export function hexToHSL(hex: string, alpha: number | null = null): string {
   return `hsl(${h}, ${s}%, ${l}%)`
 }
 
+const pendingSmoothScrolls = new WeakMap<HTMLElement, () => void>()
+
+export function isProgrammaticScrollActive(element: HTMLElement): boolean {
+  return pendingSmoothScrolls.has(element)
+}
+
 /**
- * Smooth scroll to the top of the html element
+ * Smooth scroll to the top of the html element.
+ * Card virtualization must not restore an anchor during this navigation.
  */
 export function scrollToTop(element: HTMLElement, targetScrollTop = 0 as number) {
+  pendingSmoothScrolls.get(element)?.()
   // cancel if already on top
   if (element.scrollTop === targetScrollTop)
     return
+
+  const doc = element.ownerDocument
+  let timeout: ReturnType<typeof setTimeout>
+  const finish = () => {
+    clearTimeout(timeout)
+    element.removeEventListener('scrollend', finish)
+    element.removeEventListener('wheel', finish)
+    element.removeEventListener('touchstart', finish)
+    doc.removeEventListener('pointerdown', finish, true)
+    doc.removeEventListener('keydown', finish, true)
+    pendingSmoothScrolls.delete(element)
+  }
+  // Also release the guard when scrolling is interrupted, or scrollend is unavailable.
+  timeout = setTimeout(finish, 3000)
+  pendingSmoothScrolls.set(element, finish)
+  element.addEventListener('scrollend', finish, { passive: true })
+  element.addEventListener('wheel', finish, { passive: true })
+  element.addEventListener('touchstart', finish, { passive: true })
+  doc.addEventListener('pointerdown', finish, true)
+  doc.addEventListener('keydown', finish, true)
 
   element.scrollTo({
     top: targetScrollTop,
@@ -164,7 +194,7 @@ export function delay(ms: number) {
  */
 export function isHomePage(url: string = location.href): boolean {
   try {
-    const urlObj = new URL(url)
+    const urlObj = new URL(stripBilibiliLocaleUrl(url))
     const isHttp = urlObj.protocol === 'http:' || urlObj.protocol === 'https:'
     const isBilibiliHomeHost = urlObj.hostname === 'www.bilibili.com' || urlObj.hostname === 'bilibili.com'
     return isHttp && isBilibiliHomeHost && (urlObj.pathname === '/' || urlObj.pathname === '/index.html')
@@ -172,6 +202,17 @@ export function isHomePage(url: string = location.href): boolean {
   catch {
     return false
   }
+}
+
+/**
+ * 判断实际首页，排除复用首页路径的搜索、历史等 BewlyCat 内置页面。
+ */
+export function isActualHomepage(url: string = location.href): boolean {
+  if (!isHomePage(url))
+    return false
+
+  const page = new URL(url).searchParams.get('page')
+  return page === null || page === 'Home'
 }
 
 /**
@@ -184,7 +225,7 @@ export function isHomePage(url: string = location.href): boolean {
  */
 export function isWatchLaterListPage(url: string): boolean {
   try {
-    const urlObj = new URL(url)
+    const urlObj = new URL(stripBilibiliLocaleUrl(url))
     const isHttp = urlObj.protocol === 'http:' || urlObj.protocol === 'https:'
     const isBilibiliHost = urlObj.hostname === 'www.bilibili.com' || urlObj.hostname === 'bilibili.com'
     if (!isHttp || !isBilibiliHost)
@@ -207,6 +248,7 @@ export function isWatchLaterListPage(url: string): boolean {
  * @returns true if the current page is a video or bangumi page
  */
 export function isVideoOrBangumiPage(url: string = location.href): boolean {
+  url = stripBilibiliLocaleUrl(url)
   if (
     // video page
     /https?:\/\/(?:www\.)?bilibili\.com\/(?:video|list)\/.*/.test(url)
@@ -231,6 +273,7 @@ export function isVideoOrBangumiPage(url: string = location.href): boolean {
  * @returns true if the current page is a video playback page
  */
 export function isVideoPlaybackPage(url: string = location.href): boolean {
+  url = stripBilibiliLocaleUrl(url)
   return (
     // normal video page and playlist video page
     /https?:\/\/(?:www\.)?bilibili\.com\/(?:video|list)\/.*/.test(url)
@@ -478,6 +521,7 @@ export function isInIframe(): boolean {
  */
 const BILIBILI_TRACKING_PARAMS = [
   'spm_id_from',
+  'hcfrom',
   'vd_source',
   'share_source',
   'share_medium',

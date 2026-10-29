@@ -1,0 +1,285 @@
+// BewlyCat 视频环境光（Ambilight）层级与穿透样式
+
+.bewly-ambilight-host {
+  position: fixed;
+  inset: 0;
+  pointer-events: none !important;
+  z-index: -1;
+  overflow: hidden;
+  contain: layout style;
+  transform: translate3d(0, 0, 0);
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 480ms ease-out,
+    visibility 480ms ease-out;
+
+  &.is-pending,
+  &.is-sleeping {
+    opacity: 0 !important;
+    visibility: hidden !important;
+  }
+
+  canvas {
+    position: absolute;
+    pointer-events: none;
+    transform-origin: center;
+  }
+}
+
+// 仅在环境光生效激活时，开启页面隔离与包裹层透明穿透，避免未开启用户样式污染
+html[data-bewly-ambilight] {
+  // 回复树节点圆点需遮住穿过的引导线；评论区 --bg1 半透明后仍保持不透明
+  --bew-comment-tree-node-bg: var(--bew-bg);
+
+  // 文字灰阶按光晕实时亮度重算（见 ambilightControl / textContrast），四级文字同步变化。
+  // --bew-ambilight-text-* 由 ambilightControl 写在 html（综合灰阶）与各文字区域元素（按区域背景取色）上，
+  // 子元素继承；不做过渡：文字变量为继承属性，过渡期间区域内全部后代每帧都要重算样式。
+  // 原站与插件的文字变量在每个元素上都有声明，需同样作用到全部元素并提高优先级
+  &[data-bewly-ambilight-ink] {
+    &,
+    & * {
+      --text1: var(--bew-ambilight-text-1) !important;
+      --text2: var(--bew-ambilight-text-2) !important;
+      --text3: var(--bew-ambilight-text-3) !important;
+      --text4: var(--bew-ambilight-text-4) !important;
+      --bew-text-1: var(--bew-ambilight-text-1) !important;
+      --bew-text-2: var(--bew-ambilight-text-2) !important;
+      --bew-text-3: var(--bew-ambilight-text-3) !important;
+      --bew-text-4: var(--bew-ambilight-text-4) !important;
+    }
+  }
+
+  body {
+    isolation: isolate;
+  }
+
+  // 暗色底衬沿用主题背景，跟随用户设置的深色基准色
+  &.dark body {
+    background-color: var(--bew-bg) !important;
+  }
+
+  // 点播播放页包裹层与播放器背景透明化
+  #app,
+  #video-page-app {
+    background-color: transparent !important;
+  }
+
+  .bpx-player-video-area,
+  .bpx-player-video-perch,
+  .bpx-player-video-wrap {
+    background: transparent !important;
+  }
+
+  #bilibili-player-placeholder,
+  #bilibili-player-placeholder-top,
+  #bilibili-player-placeholder-bottom,
+  #bilibili-player-placeholder-bottom-left,
+  #bilibili-player-placeholder-bottom-right {
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  #playerWrap,
+  #bilibili-player,
+  .bpx-docker-major,
+  .bpx-player-container,
+  .bpx-player-video-area {
+    box-shadow: none !important;
+  }
+
+  // 右侧栏、UP主信息卡、简介栏与发送弹幕区域透明穿透
+  .right-container,
+  .right-container-inner,
+  .up-info-container,
+  .video-desc-container,
+  .bpx-player-sending-area,
+  .bpx-player-sending-bar,
+  .bpx-player-sending-bar-left,
+  .bpx-player-sending-bar-right,
+  .bpx-player-video-info,
+  .bpx-player-dm-root,
+  .bpx-player-dm-input,
+  .bpx-player-dm-switch,
+  .bpx-player-dm-setting,
+  .bpx-player-video-inputbar-wrap,
+  .bpx-player-dm-wrap,
+  .bpx-player-sending-area::before,
+  .bpx-player-sending-area::after,
+  #danmukuBox,
+  .danmaku-wrap,
+  .bpx-docker-minor,
+  .bpx-player-auxiliary,
+  .bpx-player-collapse,
+  .bpx-player-collapse .bui-collapse-header,
+  .bpx-player-collapse .bui-collapse-body,
+  .bpx-player-dm-management,
+  .bpx-player-dm-function,
+  .bpx-player-dm-load-status,
+  .bpx-player-dm-wrap-child {
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  // 弹幕列表底部与历史记录按钮透明化
+  .bpx-player-dm-btn-footer,
+  .bpx-player-dm-btn-history {
+    background: transparent !important;
+    box-shadow: none !important;
+    border-color: transparent !important;
+  }
+
+  // UP主信息区操作按钮（充电、关注）透明穿透与幽灵蓝框适配
+  :is(.up-info-container, .up-panel-container, .up-detail, #v_upinfo, .up-info, .right-container) {
+    .upinfo-btn-panel {
+      // 内部图标与内嵌容器严禁出现边框或背景
+      .charge-btn-icon,
+      .follow-btn-inner,
+      .van-icon,
+      i,
+      svg,
+      img,
+      span {
+        border: none !important;
+        outline: none !important;
+        box-shadow: none !important;
+        background-color: transparent !important;
+      }
+
+      // 1. 充电按钮本体（仅作用于外层按钮，消除内部图标正方形小框）
+      > :is(.not-follow-charge-btn, .following-charge-btn, .new-charge-btn, .charge-btn) {
+        background: transparent !important;
+        border: 1px solid var(--brand_blue, #00aeec) !important;
+        color: var(--brand_blue, #00aeec) !important;
+        box-shadow: none !important;
+
+        * {
+          color: var(--brand_blue, #00aeec) !important;
+          fill: currentColor !important;
+        }
+
+        &:hover {
+          background: color-mix(in srgb, var(--brand_blue, #00aeec) 15%, transparent) !important;
+        }
+      }
+
+      // 2. 关注按钮本体（仅作用于外层按钮）
+      > :is(.follow-btn, .btn-follow-up) {
+        box-shadow: none !important;
+
+        // 未关注（+ 关注）：幽灵蓝框风格
+        &.not-follow {
+          background: transparent !important;
+          border: 1px solid var(--brand_blue, #00aeec) !important;
+          color: var(--brand_blue, #00aeec) !important;
+
+          * {
+            color: var(--brand_blue, #00aeec) !important;
+            fill: currentColor !important;
+          }
+
+          &:hover {
+            background: color-mix(in srgb, var(--brand_blue, #00aeec) 20%, transparent) !important;
+          }
+        }
+
+        // 已关注状态
+        &:not(.not-follow) {
+          background: transparent !important;
+          border: 1px solid var(--line_regular, rgba(128, 128, 128, 0.35)) !important;
+          color: var(--text2) !important;
+
+          * {
+            color: var(--text2) !important;
+            fill: currentColor !important;
+          }
+
+          &:hover {
+            background: var(--bew-fill-2) !important;
+          }
+        }
+      }
+    }
+  }
+
+  // 视频选集（多P、合集面板）全层级透明化，保持文字颜色与播放指示图标
+  .video-pod,
+  .video-pod__header,
+  .video-pod__body,
+  .video-pod__list,
+  .video-pod__item,
+  .video-pod .single-p,
+  .video-pod .multi-p,
+  .video-pod .page-list,
+  .video-pod .simple-base-item {
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .video-pod__item.active,
+  .video-pod .simple-base-item.active {
+    color: var(--brand_blue, #00aeec) !important;
+  }
+
+  // 推荐列表与标签容器透明化
+  .recommend-list-v1 .rec-footer,
+  .video-tag-container .tag-link,
+  .video-tag-container .show-more-btn {
+    background: transparent !important;
+    box-shadow: none !important;
+    border-color: transparent !important;
+  }
+
+  // 弹幕输入框以浅填充示意可输入区域；发送按钮保留主题色底，白字不会落在光晕上
+  .bpx-player-video-inputbar {
+    background: var(--bew-fill-1) !important;
+    border-color: transparent !important;
+  }
+
+  .bpx-player-dm-input {
+    border-color: transparent !important;
+
+    &::placeholder {
+      color: var(--text3) !important;
+    }
+  }
+
+  // 稍后再看与播放列表播放页透明穿透
+  .playlist-app
+    :is(
+      .video-info-container,
+      #playlistToolbar,
+      .playlist-container--right,
+      .up-panel-container,
+      .recommend-list-container,
+      .action-list-container,
+      .action-list-header,
+      .action-list-body,
+      .action-list-body-top,
+      .action-list-body-bottom,
+      .action-list,
+      .action-list-inner,
+      .action-list-content,
+      .action-list-item-wrap,
+      .action-list-item,
+      .singlep-list-item-inner,
+      .multip-list-item-inner,
+      .multip-list,
+      .multip-list-item
+    ) {
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  // 评论区原生底色（吸底评论框、展开回复的吸底收起栏等）改为半透明，不再以实色块遮住光晕；
+  // 保留部分底色，滚动经过的评论内容不会与吸底栏文字重叠。浮层使用 --bg1_float，不受影响
+  :is(bili-comments, .bb-comment, .comment-bilibili-fold) {
+    --bg1: color-mix(in oklab, var(--bew-bg), transparent 28%) !important;
+  }
+
+  .bb-comment,
+  .comment-bilibili-fold,
+  .comment-wrapper .comment-m {
+    background-color: transparent !important;
+  }
+}

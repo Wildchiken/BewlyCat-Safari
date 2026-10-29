@@ -34,6 +34,8 @@ export interface BewlyAppProvider {
   isHomeTabSwitching: Ref<boolean>
   scrollViewportRef: Ref<HTMLElement | null>
   reachTop: Ref<boolean>
+  // 当前页面滚动位置（文档滚动或 Bewly 视口滚动，单位 px）；供顶栏遮罩等需要连续强度的场景使用
+  scrollTop: Ref<number>
   searchFocusOverlayActive: Ref<boolean>
   mainAppRef: Ref<HTMLElement>
   handleReachBottom: Ref<(() => void) | undefined>
@@ -47,6 +49,8 @@ export interface BewlyAppProvider {
   handleBackToTop: (targetScrollTop?: number) => void
   haveScrollbar: () => Promise<boolean>
   openIframeDrawer: (url: string) => void
+  /** 以居中弹窗打开视频；不支持的地址或窄视口回退为新标签页 */
+  openVideoDialog: (url: string) => void
   // 添加活跃抽屉状态
   activeDrawer: Ref<DrawerType>
   setActiveDrawer: (drawer: DrawerType) => void

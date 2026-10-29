@@ -23,11 +23,9 @@ common:
   just_now: just now
   please_log_in_first: Please log in first
   login: Login
-  save_to_watch_later: Save to Watch later
   add_to_watch_later: Add to Watch later
   added_to_watch_later: Added to Watch later
   remove_from_watch_later: Remove from Watch later
-  added: Added
   performance_impact_warn: This feature may cause performance *DECREASE*!
   no_data: No data available
   load_failed: Failed to load
@@ -39,6 +37,7 @@ common:
     delete: Delete
     confirm: Confirm
     cancel: Cancel
+    close: Close
     enable: Enable
     disable: Disable
     refresh: Refresh
@@ -98,12 +97,80 @@ iframe_drawer:
   open_in_new_tab: Open in new tab
   close: Close
   press_esc_again_to_close: Press Esc again to close
+video_dialog:
+  title: Video playback
+  open_in_new_tab: Open in new tab
+  close: Close
+  loading: Opening video…
 player_screenshot:
   capture: Capture current video frame
   saved: Screenshot saved
   failed: Failed to capture screenshot
   video_unavailable: The current video frame is unavailable
+player_listen:
+  enter: Listen to video
+  exit: Restore video picture
+  listening: Listening
 settings:
+  ambilight:
+    title: Video Ambient Light
+    enable: Enable ambient light
+    enable_desc: Cast dynamic, soft ambient light around the video player to enhance immersion. Only works with the default and widescreen player; it turns off automatically in fullscreen, web fullscreen and Bewly Widescreen.
+    preset: Light preset
+    preset_soft: Soft
+    preset_cinema: Cinema
+    preset_vivid: Vivid
+    strength: Light strength
+    spread: Spread range
+    smoothing: Transition smoothing
+    blur: Blur intensity
+    saturation: Saturation
+    subgroup_effects: Light Effects
+    subgroup_effects_desc: Fine-tune light brightness, spread radius, and smooth transition.
+    subgroup_performance: Rendering Performance
+    subgroup_performance_desc: Cap sampling and rendering frame rate to reduce GPU load and battery usage.
+    fps: Maximum framerate
+    fps_15: 15 fps · Power saving
+    fps_24: 24 fps · Balanced
+    fps_30: 30 fps · Smooth
+  local_loudness:
+    gain_history: Levelling gain · Last 60 seconds
+    summary: Balance volume across videos to reduce loudness differences when switching videos.
+    title: Volume balance
+    enable: Enable local volume balance
+    description: Balance volume across videos to reduce loudness differences when switching. Enabling this turns off Bilibili's native normalization (it is not restored when this is disabled). Maximum boost is 6 dB.
+    target: Target loudness
+    target_desc: Start at -18 LUFS. Lower values are quieter. The player volume remains independently adjustable.
+    strength: Levelling strength
+    strength_desc: Higher strength reduces loudness differences but also changes the dynamics of music and films more.
+    status: Status
+    states:
+      off: Off
+      waiting: Waiting for video playback. Only the video player audio is processed.
+      active: Local volume balance is active
+      error: Audio processing failed; original audio restored. Reload the page to retry.
+      native-unavailable: Native normalization could not be confirmed off. Check More playback settings in the player. Audio is unchanged.
+      unsupported: This audio source cannot be safely processed. Audio is unchanged.
+  player_adjustment:
+    title: Picture & sound adjustments
+    show_button: Show player picture & sound button
+    show_button_desc: Show a player control to rotate or mirror the picture, and adjust audio sync on hover; volume balance settings also appear here once it is enabled. Rotation, mirroring and audio sync apply only to the current video; hiding the button resets them but does not disable volume balance.
+    picture: Picture
+    rotate_left: Rotate left
+    rotate_right: Rotate right
+    flip_horizontal: Mirror horizontally
+    flip_vertical: Mirror vertically
+    reset: Reset
+    audio_sync: Audio sync
+    audio_delay: Delay audio
+    audio_delay_desc: Use when the sound is ahead of the picture, up to 1000 ms. Applies only to the current video.
+    audio_delay_states:
+      waiting: Takes effect once the video plays.
+      unsupported: This audio source can’t be processed safely; original sound is kept.
+      error: Audio processing failed and fell back to the original sound. Reload the page to retry.
+  following_sort: Uploader order in the new Following layout
+  following_sort_updated: By update time
+  following_sort_group: By group
   title: Settings
   menu_general: General
   menu_bewly_pages: Bewly Pages
@@ -128,10 +195,11 @@ settings:
   category_appearance_desc: Configure frosted glass, theme colors, wallpaper, fonts, custom styles, and page style adaptation.
   category_shortcuts_desc: Enable, customize, or restore BewlyCat and player shortcuts.
   breadcrumb: Settings location
+  usage_guide: Help — BewlyCat feature guide videos
   group_interaction_layout: Interaction & Layout
   category_browsing_home_desc: Configure home recommendations, content filters, following, and home tabs.
   category_browsing_video_card_desc: Configure video card layout, previews, metadata, and link behavior.
-  category_browsing_favorites_desc: Configure how favorite content is displayed and opened.
+  category_browsing_favorites_desc: Organize favorite folders by rules and sync videos after a triple action.
   category_navigation_link_opening_desc: Configure where top bar, video card, and search links open, including drawer behavior.
   category_navigation_topbar_desc: Adjust top bar layout, components, channels, search, and notifications in one place.
   category_navigation_dock_desc: Configure Dock and sidebar position, visibility, and quick actions.
@@ -141,6 +209,9 @@ settings:
   category_playback_autoplay_desc: Configure autoplay and custom playback behavior.
   category_bilibili_comments_desc: Enhance user information and content displayed in comments.
   category_bilibili_vip_desc: Configure reminders related to premium membership benefits.
+  category_bilibili_listen_video_desc: Hide the video picture and keep only the audio, shown as a cover-and-title audio player.
+  category_bilibili_volume_balance_desc: Level loudness across videos locally to reduce sudden volume changes.
+  category_bilibili_ambilight_desc: Cast soft ambient light around the player that follows the picture.
   category_advanced_compatibility_desc: Configure compatibility with original pages, third-party extensions, and other pages.
   category_advanced_maintenance_desc: Export a backup, import settings, or restore BewlyCat defaults.
   maintenance:
@@ -189,6 +260,9 @@ settings:
     auto_play: Playback Behavior
     vip_features: VIP Features
     vip_features_placeholder: VIP feature enhancements will be added here in future updates.
+    listen_video: Listen to Video
+    volume_balance: Volume Balance
+    ambilight: Video Ambient Light
 
   changelog_placeholder: Changelog content will be displayed here.
 
@@ -202,7 +276,7 @@ settings:
   group_video_card: Video Card
   group_video_card_display: Display & Preview
   group_video_card_content: Card Content
-  group_video_card_content_desc: Choose which information and actions appear on video cards.
+  group_video_card_content_desc: Choose which information and actions appear on video cards. Some items only appear when the video provides them.
   group_video_card_context_menu: More Menu
   group_video_card_context_menu_desc: Choose which options appear after clicking a video card's more button.
   video_card_context_menu_region_recommendation: Recommend
@@ -218,10 +292,12 @@ settings:
   group_player_components: Player Components
   group_player_display_mode: Display Mode
   group_player_display_mode_desc: Set a base display mode and override it for specific playback contexts when needed.
+  group_bewly_widescreen: Bewly Widescreen
+  group_bewly_widescreen_desc: Adjust the sidebar and video layout in Bewly Widescreen. Toggle it anytime with the player button or shortcut.
   group_playback_memory: Playback Memory
-  group_playback_memory_desc: Choose whether to remember playback rate and video aspect ratio.
+  group_playback_memory_desc: Choose whether to remember playback rate, video quality, and video aspect ratio.
   group_video_page_actions: Video Page Features
-  group_video_page_actions_desc: Tags only toggle the visibility of related controls on the video page and player toolbar.
+  group_video_page_actions_desc: Choose which controls appear on the video page and player toolbar.
   group_playback_behavior: Playback Behavior
   group_auto_play: Auto Play
   group_custom_auto_play_behavior: End-of-playback Behavior
@@ -258,6 +334,7 @@ settings:
   group_hot_search: Hot Search
   group_search_results: Search Results
   group_recommendation_mode: '"For you" Recommendation Mode'
+  group_immersive_mode: Immersive mode
   group_recommendation_filters: '"For you" Recommendation Filters'
   group_recommendation_filters_desc: >
     Do not set the restricted value too large, as this may increase loading
@@ -265,12 +342,16 @@ settings:
   group_following: Following
   group_following_desc: Configure the Following page layout, live content, and video filters.
   group_favorites: Favorites
+  group_favorite_organizer: Favorites organizer
+  sidebar_cover_blur: Sidebar cover blur gradient
+  sidebar_cover_blur_desc: Use blurred covers in page sidebars such as Favorites and Watch Later. When off, the page wallpaper is used instead.
   group_search_page_mode: Search Page Mode
   group_home_tabs: Home Tabs
   group_home_layout: Home Layout
   group_original_moments_page: Bilibili Page
   group_new_moments_page: Bewly Dynamic Feed
   group_new_moments_page_desc: This page is not final and may change significantly in future updates.
+  group_moments_filters: Dynamic Filters
   group_moments_sidebar: Dynamic Feed Sidebar
   group_moments_interaction: Dynamic Card Interaction
   group_environment_info: Environment information
@@ -279,6 +360,10 @@ settings:
   environment_info_copied: Environment information copied
   environment_info_copy_failed: Failed to copy environment information
   environment_info_unknown: Unknown
+  environment_browser: Browser
+  environment_browser_version: Browser version
+  environment_bewlycat_version: BewlyCat version
+  xiaohongshu: REDnote
   group_settings_sync: Browser cloud sync
   group_version_reminder: Version reminders
   original_moments_show_user_card: Show user card
@@ -286,6 +371,12 @@ settings:
   original_moments_show_community_center: Show community center
   original_moments_show_hot_search: Show hot search
   original_moments_show_up_list: Show dynamic uploader banner
+  original_moments_use_bewly_filters: Filter the original dynamic feed
+  original_moments_use_bewly_filters_desc: When enabled, the dynamic type and keyword filters above also apply to Bilibili's original dynamic page.
+  original_moments_show_fold_comments_button: Show "Collapse comments" button
+  original_moments_show_fold_comments_button_desc: Show a "Collapse comments" button at the bottom of the comment area on Bilibili's original moments page.
+  original_moments_click_blank_to_fold_comments: Click blank areas to collapse comments
+  original_moments_click_blank_to_fold_comments_desc: When enabled, click the blank areas on either side of a moment card to collapse expanded comments on the original moments page.
   moments_show_user_card: Show user card
   moments_show_publish: Show publish action
   moments_show_live: Show live users
@@ -295,15 +386,19 @@ settings:
   moments_visible_components_original_desc: Control whether sidebar and banner components appear on the original Bilibili moments page. Theme-colored means shown; gray means hidden.
   moments_visible_components_plugin_desc: Control whether sidebar and top components appear on the Bewly moments page. Theme-colored means shown; gray means hidden.
   moments_filtered_types: Filter dynamics
-  moments_filtered_types_desc: Control which dynamic types appear in the Bewly feed. Selected (theme-colored) means not filtered; unselected means filtered out. With filters enabled, each load scans at most 100 items; when the retention rate is below 60%, further loads are manual, while rates of 60% or higher continue loading on scroll.
+  moments_filtered_types_desc: Choose which dynamic types appear in the Bewly feed; selected types are shown. When many items are filtered, you may need to load more manually.
   moments_enable_live_preview: Preview live dynamics on hover
   moments_enable_live_preview_desc: Play a live preview when hovering over a live dynamic cover.
   moments_enable_video_preview: Preview video dynamics on hover
-  moments_enable_video_preview_desc: Play a video preview when hovering over a video dynamic cover.
+  moments_enable_video_preview_desc: Preview video dynamics and forwarded videos on hover, with configurable trigger area, delay, and playback interactions.
   moments_grid_columns: Dynamic columns
   moments_tabs_position: Dynamic tabs position
-  moments_grid_columns_desc: Set the preferred column count for the Bewly dynamic feed. Card dimensions adapt to the selected layout; columns automatically reduce when space is limited, while the sidebar and feed remain centered as a group.
+  moments_start_from_last_seen: Start from where you left off
+  moments_start_from_last_seen_desc: Open the plugin moments page and the top bar moments dropdown at the last post you saw, then scroll up to load newer posts. When off, loading starts from the latest and a button still lets you jump to where you left off.
+  moments_grid_columns_desc: Set the column count for the Bewly dynamic feed. Columns reduce automatically when space is limited.
   moments_grid_columns_option: '{count} columns'
+  moments_grid_columns_more: More
+  moments_grid_columns_more_confirm: The extension offers more column options, but does not optimize the layout for them
   moments_filter_up_recommendation: Filter uploader recommendations
   moments_filter_up_recommendation_desc: Filter out every dynamic that contains an uploader recommendation attachment.
   moments_filter_up_recommendation_short: Uploader recommendations
@@ -318,7 +413,7 @@ settings:
   moments_filter_live_reservation: Live reservation dynamics
   moments_filter_live_dynamic: Live dynamics
   moments_keyword_filter: Block dynamics by keyword
-  moments_keyword_filter_desc: When enabled, dynamics are filtered if any keyword appears in the author name, title, body, attachment, or original repost. Separate multiple keywords with commas. Matching is case-insensitive.
+  moments_keyword_filter_desc: When enabled, dynamics are filtered if the author, title, or content (including reposted originals) contains any keyword. Separate keywords with commas; matching is case-insensitive.
   moments_keyword_filter_placeholder: Enter comma-separated keywords
   moments_hide_charge_exclusive: Hide charge-exclusive dynamics
   moments_hide_charge_exclusive_desc: Filter all charge-exclusive dynamics out of the extension feed.
@@ -334,8 +429,8 @@ settings:
     inherit: Follow dynamic cards
   group_moments_wanted_users: Watchlist
   group_moments_wanted_users_desc: Manage uploaders you want to watch by UID or name. The list is stored only on this device.
-  moments_enable_wanted_filter: Enable watchlist filter
-  moments_enable_wanted_filter_desc: Show a Watchlist entry in the Moments horizontal bar to display only posts from watchlisted uploaders. Turning it off hides the entry and exits the filter.
+  moments_enable_wanted_filter: Show Watchlist button
+  moments_enable_wanted_filter_desc: Show the Watchlist button in the Moments horizontal bar to display only posts from watchlisted uploaders.
   moments_wanted_users: Watchlisted uploaders
   group_moments_pinned_users: Pinned uploaders
   group_moments_pinned_users_desc: Manage uploaders pinned to the right side of the Moments bar by UID or name. The list is stored only on this device.
@@ -354,11 +449,11 @@ settings:
   show_home_button_in_touch_mode: Show Home button
   show_home_button_in_touch_mode_desc: When touch screen optimization is enabled, show a Home button next to the top bar Logo to navigate directly to the homepage.
   open_top_bar_items_in_bewly: Open Bewly pages from top bar icons
-  open_top_bar_items_in_bewly_desc: When touch screen optimization is off, the Logo, Moments, Favorites, History, and Watch Later icons follow the top bar link opening behavior and open the corresponding Dock page using its Bewly/original Bilibili setting. Unsupported icons keep their existing behavior.
+  open_top_bar_items_in_bewly_desc: When touch screen optimization is off, the Logo, Moments, Favorites, History, and Watch Later icons open the corresponding Dock page using the top bar link opening behavior.
   show_bewly_or_bili_page_switcher_desc: Show a switcher next to the homepage Logo to move between the BewlyCat and original Bilibili pages.
   show_bewly_or_bili_page_switcher_on_more_pages_desc: Show the switcher on original Bilibili pages such as Moments, Search, Anime, Favorites, History, and Watch Later. Switching to BewlyCat opens the corresponding plugin page.
   hide_lv6_last_login_location_in_top_bar_user_pop: Hide LV6 last login info
-  hide_lv6_last_login_location_in_top_bar_user_pop_desc: When enabled, the LV6 section in the top bar user popup will no longer show the last login time or location, and no login log request will be made. A full-level XP progress bar is shown instead.
+  hide_lv6_last_login_location_in_top_bar_user_pop_desc: When enabled, the LV6 section in the top bar user popup shows full-level XP progress instead of the last login time and location.
   chk_box:
     show: Show
     hidden: Hidden
@@ -396,24 +491,25 @@ settings:
     By default, Bilibili will specifically handle Chinese punctuation to achieve
     left alignment. If you are using a custom font, it is recommended to remove
     the indent.
+  cjk_latin_autospace: Auto spacing between CJK and Latin
+  cjk_latin_autospace_desc: Add a small gap between CJK characters and Latin letters or digits for better mixed-script typography. Requires Chrome / Edge 140+.
   enable_frosted_glass: Enable frosted glass effect
   frosted_glass_blur_intensity: Frosted glass blur intensity
   enable_liquid_segment_indicator: Enable liquid segment indicator
-  enable_liquid_segment_indicator_desc: >
-    Use a sliding liquid indicator on segmented controls such as home tabs, layout switcher,
-    and top-bar page switcher. When off, the selected item uses a static highlight with no
-    sliding animation. Disabled by default for smoother performance on weaker devices.
+  enable_liquid_segment_indicator_desc: Use a sliding liquid indicator on segmented controls such as home tabs and the layout switcher. Keep it off on weaker devices.
   disable_shadow: Disable shadow
   link_opening_behavior_opt:
     current_tab: Current tab
     current_tab_if_not_homepage: Current outside home
+    current_tab_if_homepage: Current on home
     background: Background tab
     new_tab: New tab
     drawer: Open in drawer
+    dialog: Open in dialog
   top_bar_link_opening_behavior: Top bar link opening behavior
   video_card_link_opening_behavior: Video card and bangumi card link opening behavior
-  link_opening_behavior_desc: 'Controls where links open. "Current outside home" means: use a new tab on the home page, and use the current tab on other pages; "Background tab" opens in the background when the browser allows it.'
-  video_card_link_opening_behavior_desc: Controls where video and bangumi cards open. You can choose the current tab, drawer, background tab, or new tab.
+  link_opening_behavior_desc: Controls where links open. "Current outside home" uses a new tab only on the home page; "Current on home" uses the current tab only on the home page.
+  video_card_link_opening_behavior_desc: Controls where video and bangumi cards open. In narrow windows, the dialog option opens a new tab instead.
   search_bar_link_opening_behavior: Search bar link opening behavior
   close_drawer_without_pressing_esc_again: Close the drawer without pressing <kbd>Esc</kbd> again
   block_ads: Block ads
@@ -425,6 +521,8 @@ settings:
   video_default_player_mode: Default video display mode
   video_danmaku_default_state: Default danmaku state
   video_danmaku_default_state_desc: Automatically toggle danmaku when a video loads, or leave it unchanged.
+  skip_concise_danmaku: Skip concise danmaku when toggling
+  skip_concise_danmaku_desc: Clicking the danmaku switch or pressing D toggles directly between on and off, skipping Bilibili's new "concise danmaku" state. Takes effect after reloading the page.
   video_caption_default_state: Default caption state
   video_caption_default_state_desc: Automatically toggle captions when a video loads, or leave them unchanged.
   video_default_state_opt:
@@ -449,21 +547,35 @@ settings:
     context_bangumi: Series / Movies
     context_watch_later: Watch Later
     context_playlist: Favorites / Playlists
+    context_moments_dialog: Video Dialog
+    context_moments_dialog_desc: Applies to videos played in Moments and video card dialogs, taking priority over other contexts.
     bewly_widescreen_sidebar_position: Bewly Widescreen Sidebar Position
     bewly_widescreen_sidebar_position_desc: Choose the sidebar position in Bewly Widescreen mode
     bewly_widescreen_sidebar_position_left: Left
     bewly_widescreen_sidebar_position_right: Right
+    bewly_widescreen_auto_collapse_sidebar: Auto-collapse Bewly Widescreen sidebar
+    bewly_widescreen_auto_collapse_sidebar_desc: 'Keep the video at full height: the sidebar collapses when space is short and shows as a narrow strip in ultrawide windows, expanding on hover. When off, the full sidebar stays visible and the video shrinks. Cannot be used with manual sidebar resizing.'
+    bewly_widescreen_video_alignment: Video centering reference
+    bewly_widescreen_video_alignment_desc: Center the video within the area outside the sidebar, or relative to the whole window when space permits.
+    bewly_widescreen_video_alignment_sidebar: Area outside sidebar (default)
+    bewly_widescreen_video_alignment_viewport: Whole browser viewport (when space permits)
+    enable_bewly_widescreen_sidebar_resize: Allow manual Bewly Widescreen sidebar resizing
+    enable_bewly_widescreen_sidebar_resize_desc: Drag the divider between the video and sidebar to resize it; double-click to restore the default. Enabling this turns off auto-collapse.
   enable_video_preview: Enable video preview feature (if possible)
   enable_video_ctrl_bar_on_video_card: Display the video control bar on the video card
   video_preview_swipe_seek: Swipe to seek nearby
   video_preview_swipe_seek_desc: Press and drag horizontally on a video preview to seek backward or forward near the current position.
+  resume_from_video_preview: Resume from preview position
+  resume_from_video_preview_desc: When clicking a video card that is being previewed, continue playback on the video page from the preview position. When off, playback starts from the beginning or your watch history.
   hover_video_card_delayed: Delayed video preview on hover over the video card
   only_cover_video_preview: Preview videos only when hovering the cover
   show_video_card_author_avatar: Show uploader avatar
   show_video_card_author_name: Show uploader name
-  show_video_card_video_tag: Show video tags
-  show_video_card_video_tag_desc: Show video category tags provided on search and other pages.
-  show_video_card_recommend_tag: Show plugin-calculated recommendation tags
+  show_video_card_category: Show video category
+  show_video_card_category_desc: Show the video's category. Click it to search the category.
+  show_video_card_video_tag: Show recommendation and search tags
+  show_video_card_video_tag_desc: Show recommendation or status labels from Bilibili and content tags on search pages.
+  show_video_card_recommend_tag: Show plugin-calculated tags
   show_video_card_recommend_tag_desc: Display tags calculated by the plugin, such as "High Engagement", "Popular", etc.
   show_video_card_publish_time: Show publish time
   show_video_card_view_count: Show view count
@@ -473,20 +585,24 @@ settings:
   show_video_card_watch_later: Show Watch Later button
   show_video_card_more_button: Show more menu button
   show_video_watched_badge: Track and show watched
-  auto_hide_top_bar: Auto-hide top bar
+  other_page_top_bar_config: Other pages top bar configuration
+  other_page_top_bar_config_desc: 'Controls when the top bar appears on pages other than video pages (such as Home and Moments). "On hover" shows it when the pointer enters the top of the page; "On scroll" hides it when scrolling down and shows it when scrolling up.'
   video_page_top_bar_config: Video page top bar configuration
   video_page_top_bar_config_desc: 'Controls when the top bar appears on video pages. "On hover" shows it when the pointer enters the top of the page; "On scroll" shows it while the page scrolls.'
   video_page_top_bar_config_opt:
     alwaysShow: Always show
     alwaysHide: Always hide
-    showOnMouse: On hover
+    showOnMouse: On hover (Bewly only)
     showOnScroll: On scroll
   top_bar_style: Top bar style
   top_bar_style_desc: Choose the top bar background.
   top_bar_style_opt:
-    default: Default (white fog/shadow)
-    transparent: Shadow
+    default: Auto
     frosted_glass: White fog
+    transparent: Shadow
+    exp_default: Auto (experimental)
+    exp_frosted_glass: White fog (experimental)
+    exp_transparent: Shadow (experimental)
   show_top_bar_theme_color_gradient: Show theme color gradient in top bar (only works in dark mode)
   show_bewly_or_bili_page_switcher: Show BewlyBewly/Bilibili page switcher
   show_bewly_or_bili_page_switcher_on_more_pages: Show BewlyCat/Bilibili page switcher on more pages
@@ -503,15 +619,21 @@ settings:
   auto_receive_bcoin_coupon_desc: When enabled, B-coin coupons will be automatically received when detected
   auto_receive_vip_exp: Auto receive VIP experience
   auto_receive_vip_exp_desc: When enabled, will automatically receive daily VIP experience
+  notification_badge_types: Messages included in notification badges
+  notification_badge_types_desc: Choose which message types count toward the top bar badge. The menu also shows unread badges only for selected types.
+  notification_followed_private_messages: Private messages from followed users
+  notification_unfollowed_private_messages: Private messages from unfollowed users
   open_notifications_page_as_drawer: Open notifications page as drawer
-  show_like_notification_reminder: Show like notifications
-  show_like_notification_reminder_desc: When enabled, likes are included in the top bar notifications badge count.
 
   # Video Card Grid Settings
   group_video_card_grid: Video Card Grid
   auto_switch_list_layout: Automatically switch list columns based on video grid width
   auto_switch_list_layout_desc: When enabled, two-column mode switches to one column when the video grid is narrower than the configured width.
   auto_switch_list_layout_breakpoint: Switch at
+  video_card_cover_ratio: Cover width
+  video_card_cover_ratio_desc: Set the cover width separately for horizontal video cards in one- and two-column layouts.
+  video_card_cover_ratio_one_column: One column
+  video_card_cover_ratio_two_columns: Two columns
   grid_breakpoints: Grid Breakpoints
   grid_breakpoints_desc: Set the number of columns at different video grid widths. The matching column count is used when the grid reaches each breakpoint.
   grid_min_width: Width ≥
@@ -537,9 +659,6 @@ settings:
   video_card_shadow_reset: Reset shadow settings
   video_card_layout: Video card layout
   video_card_layout_desc: Switch between the redesigned card and the legacy layout.
-  release_offscreen_images: Reclaim offscreen cover memory
-  release_offscreen_images_desc: Unload cover image resources outside the retained range to reduce long-list memory usage.
-  release_offscreen_images_warning: 'Warning: reclaiming offscreen memory may cause stutter when images are rendered again. Images are not reclaimed by default.'
   video_card_layout_option:
     modern: Modern layout
     old: Classic layout
@@ -552,12 +671,42 @@ settings:
   topbar_components_adjustment: Top Bar Components Badge Settings
   topbar_components_adjustment_desc: Configure the badge display mode for each top bar icon
   group_topbar_pinned_channels: Top Bar Pinned Channels
-  topbar_pinned_channels_desc: Choose items from the logo dropdown to keep directly on the top bar and arrange their priority.
+  topbar_pinned_channels_desc: Channels appear in your chosen order. Those that do not fit remain available in the overflow menu.
   topbar_pinned_channels_title: Pinned channels
-  topbar_pinned_channels_hint: Click a tile to pin or unpin it; the order follows the sequence of your clicks. Items toward the end hide first when space is tight.
+  pinned_manager:
+    count: '{count} channels added'
+    add: Add channels
+    clear: Clear
+    search: Search channels
+    categories: Channel categories
+    screen: 'Media & entertainment'
+    animation_games: 'Anime & games'
+    knowledge_news: 'Knowledge & technology'
+    life_interests: Lifestyle
+    services: Platform services
+    history_reset: Another operation changed the selection. Previous undo history has been cleared.
+    all: All
+    selected: Selected
+    no_results: No matching channels
+    move_before: 'Move {name} earlier'
+    move_after: 'Move {name} later'
+    remove: 'Remove {name}'
+    undo: Undo last change
+    hidden: Pinned channels are currently hidden
+    enable: Enable
+    layout: 'Top bar {visible} · More {hidden}'
+    unavailable: Top bar not visible
+    open: 'Open channels, including {count} collapsed items'
+    channels: Channels
+    manage: Manage pinned channels
+    collapse: Hide picker
+    clear_search: Clear search
+    view_all: View all categories
+    all_visible: All visible
+  topbar_pinned_channels_hint: Add channels, then use the drag handles or move buttons to change their order.
   topbar_pinned_channels_all_selected: All channels have already been pinned.
   topbar_pinned_channels_empty: You have not pinned any channels yet.
-  topbar_pinned_channels_order_tip: Selection order follows your clicks. Click an item again to unpin it.
+  topbar_pinned_channels_order_tip: Add channels, then use the drag handles or move buttons to change their order.
   top_bar_logo_style: Logo style
   top_bar_logo_style_desc: Choose between the circular icon and the horizontal brand mark in the top bar.
   top_bar_logo_style_opt:
@@ -580,6 +729,7 @@ settings:
   dock_item_use_original_bili_web_page: Use the original Bilibili web page
   disable_dock_glowing_effect: Disable the dock glowing effect
   disable_light_dark_mode_switcher: Disable light/dark mode switcher
+  disable_back_to_top_button_on_dock: Disable back to top button on dock
   back_to_top_and_refresh_buttons_are_separated: Separate Back to Top and Refresh Buttons
   always_show_dock_actions_when_auto_hide: Always show action buttons when the dock auto-hides
   sidebar_position: Sidebar position
@@ -648,18 +798,35 @@ settings:
   use_plugin_search_results_page_desc: When enabled, searches will use the plugin's built-in search results page with category filtering and more features
   use_plugin_search_results_page_disabled_by_original_homepage: Searches use bilibili's original results page while the original bilibili homepage is enabled
   depersonalize_search_results: Depersonalized search
-  depersonalize_search_results_desc: When enabled, search result requests are sent without login cookies.
+  depersonalize_search_results_desc: When enabled, search as a signed-out user so results are not personalized.
+  show_search_identity_switcher: Show signed-in / guest quick switcher
+  show_search_identity_switcher_desc: Show a pill button group to the right of the category tabs on the search results page to switch between signed-in and guest search. Guest is the same as enabling Depersonalized search.
   search_results_pagination_mode: Search results pagination mode
   search_results_pagination_mode_desc: 'Choose how search results are displayed: infinite scroll or page-based navigation'
   individually_set_search_page_wallpaper: Individually set search page wallpaper
   recommendation_mode: Recommendation mode
-  recommendation_mode_desc: >
-    Web: normal web recommendation mode. No Cookie: request homepage
-    recommendations without cookies. App: mobile recommendation mode, requires
-    an access key first.
-  recommendation_mode_web_no_cookie: No Cookie
-  remember_no_cookie_recommendation_state: Reduce No Cookie recommendation repeats
-  remember_no_cookie_recommendation_state_desc: After reloading the page, continue the recommendation refresh progress and send recent exposure records with recommendation requests to reduce repeats. Only applies in No Cookie mode.
+  recommendation_mode_desc: 'Web: web recommendations. Web Guest: recommendations as a signed-out user. App Single / App Double: mobile recommendations, requires an access key first. Single-column cards show the uploader avatar, publish time and likes; double-column cards show recommendation reasons.'
+  show_recommendation_mode_switcher: Show quick recommendation mode switcher
+  show_recommendation_mode_switcher_desc: When "For You" is selected, show a segmented control to the right of the home tabs to choose Web, Web Guest, App Single, or App Double directly.
+  recommendation_mode_switcher_options: Visible recommendation modes
+  recommendation_mode_switcher_options_desc: Choose which options appear in the quick switcher and drag them to reorder. At least 2 must stay visible.
+  show_immersive_mode_entry: Enable immersive mode
+  show_immersive_mode_entry_desc: When "For You" is selected, show an entry to the right of the home tabs that plays recommendations continuously on the Bilibili video page in Bewly widescreen, with the home feed in the sidebar.
+  immersive_wheel_switch: Switch videos with the mouse wheel
+  immersive_wheel_switch_desc: Scroll the wheel over the video to switch to the previous or next one.
+  immersive_keyboard_switch: Switch videos with shortcuts
+  immersive_keyboard_switch_desc: Use ↑↓, W / S or PageUp / PageDown to switch to the previous or next video. Ignored while typing. When off, ↑↓ adjust the player volume again.
+  immersive_auto_play: Autoplay after switching
+  immersive_auto_play_desc: Start playback after switching even if autoplay is turned off in the Bilibili player.
+  immersive_auto_next: Play next when finished
+  immersive_auto_next_desc: Switch to the next recommendation when the current video ends. When off, the player's own end behavior applies.
+  immersive_preload_next: Preload the next video
+  immersive_preload_next_desc: Open the next video page in the background so switching is almost instant. Uses extra memory and data, and skipped videos still count as a page visit.
+  recommendation_mode_web_no_cookie: Web Guest
+  recommendation_mode_app_single: App Single
+  recommendation_mode_app_double: App Double
+  remember_no_cookie_recommendation_state: Reduce Web Guest recommendation repeats
+  remember_no_cookie_recommendation_state_desc: Continue recommendation progress after reloading to reduce repeats. Only applies in Web Guest mode.
   auto_switch_recommendation_mode: Auto switch recommendation mode
   auto_switch_recommendation_mode_desc: >
     Automatically switch from App mode to Web mode when App recommendation fails.
@@ -674,7 +841,7 @@ settings:
     Use the Bilibili mobile app to scan this QR code in order to authorize the
     access key.
   show_recommendation_filter_risk_warning: Show filter risk warnings
-  show_recommendation_filter_risk_warning_desc: After checking 100 valid recommendations, warn when the configured filters retain fewer than 50 because repeated requests may trigger risk control.
+  show_recommendation_filter_risk_warning_desc: Warn when too many recommendations are filtered out, since repeated requests may trigger risk control.
   disable_filters_for_followed_users: Disable filters for followed users
   disable_filters_for_followed_users_desc: >
     If you enable this option, all filters you set will be disabled for the
@@ -693,6 +860,81 @@ settings:
   filter_by_publish_time_desc: Filter out videos published more than the specified number of days ago (only works in Web recommendation mode, minimum 7 days).
   filter_by_publish_time_unit: days
   filter_item_already_exist: This filter item already exists!
+  favorite_organizer:
+    sync_after_triple: Sync after triple action
+    sync_after_triple_desc: After liking, coining and favoriting a video in one click on the video page, also add it to every folder whose rules it matches. It stays in the default folder.
+    batch_title: Organize default folder
+    batch_desc: Scan every video in the default folder and copy the ones that match a rule into the corresponding folders. Videos already in a target folder are skipped, and the default folder is left unchanged.
+    start: Start
+    stop: Stop
+    preparing: Preparing…
+    scanning: Scanning the default folder, {count} videos read
+    copying: Copying to target folders, {count} videos added
+    result_summary: Scanned {scanned} videos
+    result_folder: '{title}: {matched} matched, {copied} newly added'
+    result_folder_failed: '{title}: {matched} matched, {copied} newly added, then failed ({message})'
+    stopped: Organizing stopped
+    no_rules: No usable rules. Add conditions to a folder first.
+    no_default_folder: Default folder not found
+    account_changed: The account changed, so organizing was stopped
+    failed: 'Organizing failed: {message}'
+    rules_title: Rules
+    rules_desc: Each folder can have several rules, and a video goes into the folder when it matches any of them. All conditions in one rule must match; when a condition has several values, any one of them is enough.
+    load_folders_failed: Failed to load folders. Refresh and try again later.
+    empty: No rules yet. Click “New rule” to pick a folder and set conditions.
+    folder_missing: This folder is not in the current account and will be skipped
+    remove_rule: Delete rule
+    new_rule: New rule
+    edit_rule: Edit rule
+    copy_rule: Copy as new rule
+    refresh_folders: Refresh folders
+    rule_editor_desc: Pick a target folder and set conditions. All condition types must match; any one value within a type is enough.
+    folder: Target folder
+    folder_placeholder: Select a folder
+    folder_missing_option: '{title} (unavailable)'
+    folder_required: Select a target folder
+    conditions_required: Set at least one condition
+    rule_duplicate: 'This folder already has the same rule: {rule}'
+    rule_covered: 'A broader rule in this folder already covers this one: {rule}'
+    rule_covers: 'This rule covers {count} existing rule(s) in this folder, which will be removed when you save:'
+    summary_part: '{label}: {value}'
+    value_separator: ', '
+    part_separator: '; '
+    rule_empty: No conditions, so this rule never matches
+    up: Uploader
+    up_placeholder: Enter a UID, space link or name, then press Enter
+    up_already_added: This uploader is already in the rule
+    zone: Zone
+    zone_placeholder: Type to filter and add a zone (a main zone includes all its sub-zones)
+    zone_main: Main zone
+    zone_no_match: No matching zones
+    title_keyword: Title keyword
+    title_keyword_placeholder: Enter a keyword and press Enter (case-insensitive)
+    triple_synced: 'Synced to folders: {folders}'
+    triple_sync_failed: Failed to sync favorites after triple action
+  wanted_users:
+    no_results: No uploader found. Try another name.
+    search_failed: Failed to search uploaders. Please try again later.
+    invalid_uid: Enter a valid uploader UID
+    pinned_limit: You can pin at most {count} uploaders
+    not_found: Uploader not found
+    info_failed: Failed to get uploader information. Please try again later.
+    placeholder: Uploader UID or name
+    pinned_already: This uploader is already pinned
+    wanted_already: This uploader is already in Wanted
+    pinned_need_follow: Follow {name} before pinning them
+    wanted_need_follow: Follow {name} before adding them to Wanted
+    pinned_added: Pinned {name} to the dynamic feed
+    wanted_added: Added {name} to Wanted
+    pinned_removed: Unpinned {name}
+    wanted_removed: Removed {name} from Wanted
+    remove_pinned: Unpin {name}
+    remove_wanted: Remove {name} from Wanted
+    remove_pinned_title: Unpin
+    remove_wanted_title: Remove from Wanted
+    pinned_empty: No uploaders pinned. Pinned uploaders appear on the right of the dynamic feed.
+    wanted_empty: No uploaders added. Add one to filter by Wanted on the Bewly dynamic feed.
+  authorization_success: Authorization successful
   filter_by_title: Filter by title
   filter_by_title_desc: >-
     Filtered out the videos that contain the titles you set (case-insensitive).
@@ -734,7 +976,7 @@ settings:
   use_following_new_layout: Use new layout for Following tab
   use_following_new_layout_desc: Display followed UPs list on the left and video feed on the right
   collected_season_play_all_mode: Collected series Play All start position
-  collected_season_play_all_mode_desc: Controls Play All start position for collected series on Favorites, Top Bar, and the native space page. Defaults to series beginning; falls back to beginning if last watched is not found. Does not change list order or playlist direction.
+  collected_season_play_all_mode_desc: Controls where Play All starts for collected series on Favorites, Top Bar, and space pages. Starts from the beginning if no last-watched record is found.
   collected_season_play_all_mode_beginning: Series beginning
   collected_season_play_all_mode_latest: Latest episode
   collected_season_play_all_mode_last_watched: Last watched
@@ -764,10 +1006,18 @@ settings:
   use_original_bilibili_topbar_desc: >-
     Only applies when top bar visibility is on. Enable it to use the original
     Bilibili top bar; disable it to use the BewlyCat top bar.
+  top_bar_mode: Top bar type
+  top_bar_mode_opt:
+    original: Original top bar
+    bewly: BewlyCat top bar
   adapt_to_other_page_styles: Adapt to other page styles
   adapt_to_other_page_styles_desc: Adapt to some common pages to match with the BewlyBewly theme.
+  disable_background: Disable background
+  disable_background_desc: Completely disable the plugin page's solid, gradient and wallpaper backgrounds (including the search page wallpaper) to show the original Bilibili page background.
   prevent_mobile_redirect: Prevent mobile redirect
-  prevent_mobile_redirect_desc: When enabled, a desktop UA is used only for www.bilibili.com to prevent redirects to m.bilibili.com. Direct visits to the mobile site are unaffected.
+  prevent_mobile_redirect_desc: When enabled, prevents www.bilibili.com from redirecting to the mobile site.
+  enable_firefox_scrollbar_repaint: Repaint Firefox scrollbar
+  enable_firefox_scrollbar_repaint_desc: Firefox only allows changing the native scrollbar's width and color. When enabled, plugin pages use a repainted scrollbar that matches the Chromium version.
   follow_bilibili_evolved_color: Follow the Bilibili Evolved theme color
   follow_bilibili_evolved_color_desc: >-
     After changing the theme color in Bilibili Evolved, you will need to
@@ -786,11 +1036,30 @@ settings:
     settings?
   current_contributors: BewlyCat Contributors (including BewlyBewly)
   contributors_image_failed: Contributor image failed to load
+  open_source_license: Open Source License
+  open_source_license_desc: BewlyCat is a derivative of BewlyBewly, licensed under MIT with additional usage restrictions. Redistributions of this project or its derivatives must retain the copyright notices below and the full license text.
+  original_project: original project
+  view_full_license: View Full License
+  view_third_party_licenses: Third-Party Licenses
+  third_party_licenses: Third-Party Licenses
+  third_party_licenses_desc: Third-party dependencies bundled into the extension and their licenses.
+  third_party_licenses_failed: Failed to load third-party license information
   enable_settings_sync: Allow syncing settings
   enable_settings_sync_desc: >-
     Save settings locally and to browser cloud storage. Wallpaper/background
     settings and per-device playback state are not synced (requires signing in
     to the browser account).
+  sync_cloud_conflict_title: Cloud settings backup found
+  sync_cloud_conflict_desc: >-
+    A settings backup already exists in cloud storage. Settings present on both
+    sides will follow the side you choose.
+  sync_cloud_use_cloud: 'Download: cloud settings take precedence'
+  sync_cloud_use_local: 'Upload: local settings take precedence'
+  sync_cloud_status_failed: Failed to read cloud sync status
+  sync_cloud_enable_failed: Failed to enable settings cloud sync
+  sync_cloud_incompatible: >-
+    The cloud data was written by a newer version of the extension. Update the
+    extension before enabling sync.
   disable_auto_play_collection: Auto disable collection autoplay
   disable_auto_play_collection_desc: Automatically turn off the autoplay feature for video collections
   keep_collection_video_default_mode: Keep collection videos in default mode
@@ -805,6 +1074,20 @@ settings:
   remember_playback_rate_desc: >
     When enabled, the player will remember your last set playback rate and
     automatically apply it when opening videos
+  custom_playback_rate: Custom playback rate
+  custom_playback_rate_desc: Enter a rate from 0.25 to 5 to apply to the current video. Enable Remember playback rate to save it.
+  custom_playback_rate_apply: Apply to current video
+  custom_playback_rate_no_video: No controllable video on this page. Open these settings on a video playback page.
+  playback_rate_step: Playback rate shortcut step
+  playback_rate_step_desc: Change the rate by 0.01–1 per key press; the default is 0.25. Configure the keys in Shortcuts.
+  fullscreen_wheel_volume: Mouse wheel volume in fullscreen
+  fullscreen_wheel_volume_desc: In fullscreen, BewlyCat handles the mouse wheel and changes the volume by a fixed step per notch, replacing bilibili's inconsistent native step.
+  fullscreen_wheel_volume_step: Wheel volume step
+  fullscreen_wheel_volume_step_desc: Change the volume by 1–50 per notch; the default is 5.
+  remember_video_quality: Remember video quality
+  remember_video_quality_desc: Restore the last selected video quality; if it is unavailable, the current quality is kept.
+  remember_video_quality_confirm_title: Enable Remember video quality?
+  remember_video_quality_confirm_message: Bilibili already remembers your video quality. This feature is only meant to stop Bilibili from automatically starting high-quality trials on a poor network. If your network is good, you don't need it; Bilibili's built-in memory is enough.
   remember_video_aspect_ratio: Remember video aspect ratio
   remember_video_aspect_ratio_desc: >
     When enabled, the player will remember your last selected video aspect ratio
@@ -819,23 +1102,25 @@ settings:
   use_bilibili_default_auto_play_desc: >
     Let Bilibili decide what happens when playback ends instead of applying the per-video-type settings below.
   auto_play_watch_later: Watch Later
+  auto_remove_watch_later_on_end: Remove from Watch Later after playback
+  auto_remove_watch_later_on_end_desc: Automatically remove finished videos on the Watch Later playback page. Videos with multiple parts are removed only after the final part finishes.
   auto_play_mode_default: Bilibili Default
   auto_play_mode_auto_play: Auto-play
   auto_play_mode_auto_play_with_recommend: Play recommendations
   auto_play_mode_pause_at_end: Pause at End
   auto_play_mode_loop: Single Loop
   auto_play_multipart: Multi-part Videos
-  auto_play_multipart_desc: Choose auto-play behavior for multi-part videos. "Play recommendations" continues with recommended videos after the current video ends.
+  auto_play_multipart_desc: Choose auto-play behavior for multi-part videos.
   auto_play_collection: Collection Videos
-  auto_play_collection_desc: Choose auto-play behavior for collection videos. "Play recommendations" continues with recommended videos after the current video ends.
+  auto_play_collection_desc: Choose auto-play behavior for collection videos.
   auto_play_recommend: Recommended Videos
-  auto_play_recommend_desc: Choose auto-play behavior when video ends. "Play recommendations" continues with recommended videos after the current video ends.
+  auto_play_recommend_desc: Choose auto-play behavior when a single video ends.
   auto_play_playlist: Playlist Videos
-  auto_play_playlist_desc: Choose auto-play behavior for playlist videos. "Play recommendations" continues with recommended videos after the current video ends.
+  auto_play_playlist_desc: Choose auto-play behavior for playlist videos.
   enable_random_play: Enable custom playback for video collections
   enable_random_play_desc: Add sequential, reverse, and random playback plus playlist editing to multi-part videos, collections, Watch Later, and playlists.
   default_custom_play_order: Default custom playback option
-  default_custom_play_order_desc: Only controls the order selected by default in the player, not the switch state. Per-video-type defaults override it when enabled.
+  default_custom_play_order_desc: Set the play order selected by default in the player. Per-video-type defaults take precedence when enabled.
   enable_custom_play_order_overrides: Set custom playback defaults by video type
   enable_custom_play_order_overrides_desc: Choose a separate default custom playback option for each supported playback context.
   custom_play_order_overrides: Per-video-type defaults
@@ -861,11 +1146,13 @@ settings:
   random_play_disabled: Custom playback disabled
   random_play_not_enabled: Custom playback is not enabled
   random_play_min_videos_required: At least {count} videos required to enable random play
-  enable_undo_refresh_button: Enable Undo Refresh Button(only effective in Web recommendation mode)
-  enable_undo_refresh_button_desc: >-
-    After refreshing the page, display an undo button that restores the content
-    before the refresh when clicked.
+  enable_undo_refresh_button: Enable homepage back/forward buttons
+  enable_undo_refresh_button_desc: Undo recommendation refreshes on the extension homepage, or navigate up to 5 recommendation batches on the original Bilibili homepage.
+  native_home_feed_back: Previous recommendations
+  native_home_feed_forward: Next recommendations
   shortcuts:
+    undo_reset: Undo reset
+    reset_undo_hint: Reset applied. Undo before leaving this page to restore the shortcut configuration from before the latest reset.
     title: Keyboard Shortcuts
     enable_all_shortcuts_toggle: Enable Keyboard Shortcuts
     enable_all_shortcuts_toggle_desc: Enable or disable all keyboard shortcuts functionality
@@ -874,7 +1161,6 @@ settings:
       homepage: Homepage Shortcuts
       general: General Shortcuts
       fullscreen_mode: Fullscreen Mode Shortcuts
-      global_actions: Global Actions
     official:
       play_pause: Play/Pause
       forward: Forward 5s
@@ -899,7 +1185,8 @@ settings:
       reset_default: Reset to Default
     reset_all_button: Reset All Shortcuts
     reset_all_ext_shortcuts: Reset All Extension Shortcuts
-    press_keys: Click the input box, then press the shortcut keys
+    press_keys: Press the shortcut keys
+    not_set: Not set
     conflict: The shortcut is already used by the extension shortcut “{name}” and cannot be assigned again.
     danmu_status: Show Danmu Status
     danmu_status_desc: Show current danmu toggle status
@@ -927,6 +1214,10 @@ settings:
     turn_off_light_desc: Toggle theater mode
     caption: Captions
     caption_desc: Toggle captions
+    video_screenshot: Video Screenshot
+    video_screenshot_desc: Save the current video frame as a PNG image, even when the player screenshot button is hidden.
+    listen_video: Listen to video
+    listen_video_desc: Toggle listen-video mode, hiding the video picture and keeping only the audio.
     increase_playback_rate: Increase Speed
     increase_playback_rate_desc: Increase playback speed
     decrease_playback_rate: Decrease Speed
@@ -978,7 +1269,7 @@ settings:
   show_comment_host_tag: Show OP tag
   show_comment_host_tag_desc: Show an OP tag on the root comment in reply detail view
   enable_comment_reply_tree_display: Comment tree view
-  enable_comment_reply_tree_display_desc: Organize nested replies by reply relationship. When off, comments are not reordered, indented, or decorated with reply-tree guides
+  enable_comment_reply_tree_display_desc: Organize nested replies into a tree by reply relationship.
   comment_reply_tree_mode:
     title: Comment reply tree style
     desc: Group replies by parent and posting time. Line modes let you collapse any parent’s replies. “Collapse parent” also folds the parent body; “Keep parent” leaves the parent visible and only hides its replies
@@ -990,28 +1281,63 @@ settings:
     desc: Choose how replies appear in the comment tree. “Load more” appends replies downward while keeping your current reading position; “Pagination” keeps Bilibili’s native pagination and shows only the current page
     load_more: Load more
     pagination: Pagination
+  enable_comment_reply_tree_container: Fixed-height reply container
+  enable_comment_reply_tree_container_desc: Scroll expanded replies inside a fixed-height container instead of stretching the whole thread. Requires the comment tree view
+  comment_reply_tree_container_height: Reply container height
+  comment_reply_tree_container_height_desc: Maximum height of the reply container; it shrinks to fit when there are fewer replies.
   adjust_comment_image_height: Adjust comment image height
   adjust_comment_image_height_desc: Automatically adjust comment image height to match actual aspect ratio and prevent distortion
   hide_comment_image_scrollbar: Hide page scrollbar in comment image preview
   hide_comment_image_scrollbar_desc: Hide the page scrollbar when opening a comment image preview so it does not appear beside the overlay
   video_player_scroll: Scroll after adjusting the display mode
-  video_player_scroll_desc: >-
-    When enabled, it will automatically scroll to the appropriate position when
-    the default mode is widescreen and default.
+  video_player_scroll_desc: Automatically scroll to the selected position after adjusting the display mode.
+  video_player_scroll_mode:
+    title: Scroll position
+    sending_bar: Keep danmaku bar visible
+    player_center: Center player
   enlarge_favorite_dialog: Enlarge favorite dialog
   enlarge_favorite_dialog_desc: When enabled, the favorite dialog on video pages will be displayed in a larger size for easier viewing and management.
   external_watch_later_button: External watch later button
   external_watch_later_button_desc: Show a standalone Watch later button in the video toolbar. It displays the current state and can add or remove the video.
   show_vertical_video_zoom_button: Vertical video zoom button
   show_vertical_video_zoom_button_desc: Show zoom controls and the visible-area position control for vertical videos
+  show_bewly_widescreen_button: Show player Bewly Widescreen button
+  show_bewly_widescreen_button_desc: Show the Bewly Widescreen button in the video player controls.
   show_video_screenshot_button: Show player screenshot button
-  show_video_screenshot_button_desc: Show a button in the video player controls for capturing the current video frame.
+  show_video_screenshot_button_desc: Show a screenshot button in the player controls. The shortcut still works when the button is hidden.
+  show_video_pip_button: Show player picture-in-picture button
+  show_video_pip_button_desc: Show the picture-in-picture button in the player controls. The shortcut still works when the button is hidden.
+  enable_listen_video: Enable listen-video mode
+  enable_listen_video_desc: Use the player button or shortcut to listen to videos. Only the picture is hidden; the video stream still loads.
+  show_listen_video_button: Show player listen-video button
+  show_listen_video_button_desc: Show a listen-video toggle in the player controls. The shortcut still works when the button is hidden.
+  listen_video_cover_shape: Listen-video cover shape
+  listen_video_cover_shape_desc: The vinyl circle spins while playing; square and rectangle stay still.
+  listen_video_cover_shape_circle: Vinyl circle
+  listen_video_cover_shape_square: Square
+  listen_video_cover_shape_rectangle: Rectangle
+  listen_video_glow: Listen-video cover glow
+  listen_video_glow_desc: Adds a soft halo behind the cover. The breathe mode pulses gently with playback and freezes when paused.
+  listen_video_glow_none: Off
+  listen_video_glow_static: Static
+  listen_video_glow_breathe: Breathe
+  listen_video_glow_color: Listen-video glow color
+  listen_video_glow_color_desc: Cover mode uses the cover's dominant color for the glow, or the theme color if unavailable.
+  listen_video_glow_color_theme: Theme color
+  listen_video_glow_color_cover: Follow cover
+  listen_video_background: Listen-video background
+  listen_video_background_desc: Blur fills the background with a blurred copy of the cover; solid keeps the plain dark backdrop.
+  listen_video_background_solid: Solid
+  listen_video_background_blur: Cover blur
   group_fonts: Font
   group_visual_effects: Visual Effects
   visibility: show
 auth:
   auth_access_key_first: Before doing this, authorize BewlyBewly to use the access key.
 topbar:
+  top_bar_switcher: Bilibili/BewlyCat top bar switcher
+  switch_to_bilibili_top_bar: Switch to the Bilibili top bar
+  switch_to_bewly_top_bar: Switch to the BewlyCat top bar
   sign_in: Sign in
   notifications: Notifications
   moments: Moments
@@ -1103,6 +1429,8 @@ topbar:
     uploaded: 'uploaded: '
     now_streaming: 'now streaming: '
     live_status: LIVE
+    last_seen: Last seen here
+    jump_to_last_seen: Jump to where you left off
   upload_dropdown:
     article: Article
     music: Music
@@ -1121,7 +1449,10 @@ dock:
   light_mode: Light Mode
   settings: Settings
 video_card:
+  episode_watch_later_info_failed: Unable to get Watch later information for this episode
+  feedback_options_unavailable: Feedback options are unavailable
   operation:
+    favorite: Save to favorites
     not_interested: Not Interested
     not_interested_uploader: Don't Recommend This Uploader
     open_in_new_tab: Open in New Tab
@@ -1129,6 +1460,7 @@ video_card:
     open_in_new_window: Open in New Window
     open_in_current_tab: Open in Current Tab
     open_in_drawer: Open in Drawer
+    open_in_dialog: Open in Dialog
     copy_video_link: Copy Video Link
     copy_clean_video_link: Copy Clean Video Link
     copy_bv_number: Copy BV Number
@@ -1138,6 +1470,13 @@ video_card:
     unfollow_user: Unfollow User
     block_user: Block User
     more_options: More options
+    scroll_top: Scroll to top
+    scroll_bottom: Scroll to bottom
+  favorite_dialog:
+    hint: Select one or more folders. Uncheck a folder to remove this video from it.
+    empty: No folders yet. Create a folder on Bilibili, then refresh.
+    saved: Favorites updated
+    save_failed: Failed to save favorites. Please try again.
   follow_user_confirm:
     title: Confirm Follow User
     message: Are you sure you want to follow {name}?
@@ -1153,9 +1492,33 @@ video_card:
   group_contribution: '{firstAuthor} and {num} others contributed'
   video_removed: Video removed
   watched: Watched
+  browsed: Opened
   visited_recently: Visited within the past month
 home:
-  recommendation_filter_risk_warning: The current filters retained only {count} of 100 valid recommendations. This may cause frequent requests and trigger API risk control. Consider relaxing the filters.
+  following_display_flat: List
+  following_display_grouped: Groups
+  following_search_videos: 'Search videos by {name}'
+  following_clear_video_search: Clear video search
+  following_no_search_results: No matching video submissions
+  following_default_group: Default group
+  following_special_group: Special follows
+  following_group_name: 'Group {id}'
+  following_groups_load_failed: Could not load groups. Showing uploaders by update time.
+  following_groups_retry: Retry
+  following_move_group: Move to group
+  following_remove_special: Remove from special follows
+  following_add_special: Add to special follows
+  following_create_group: Create group
+  following_rename_group: Rename group
+  following_delete_group: Delete group
+  following_group_name_label: Group name (1–16 characters)
+  following_group_name_invalid: Enter a group name with 1–16 characters
+  following_delete_group_confirm: 'Delete “{name}”? You will still follow its uploaders. Uploaders with no other regular group will appear in the default group.'
+  following_action_success: 'Updated following settings for {name}'
+  following_action_failed: 'Operation failed: {message}'
+  app_authorization_required: The App mode access token is missing or expired. Re-authorize to continue using personalized recommendations.
+  reauthorize_app: Re-authorize
+  recommendation_filter_risk_warning: The current filters retained only {count} of {total} valid recommendations. This may cause frequent requests and trigger API risk control. Consider relaxing the filters.
   tell_us_why: Choose a reason why
   not_interested_desc: >-
     You can use <kbd>↑</kbd> and <kbd>↓</kbd> to choose the reason, or using
@@ -1171,6 +1534,29 @@ home:
   live: Live
   moments: Moments
   uploaders_with_updates: no uploader with updates | {count} uploader with updates | {count} uploaders with updates
+  risk_control_paused: Requests were too frequent, so home recommendations have paused for about {seconds} seconds. Refresh and try again later.
+  app_fallback_web: App recommendations failed to load. Switched to Web mode automatically.
+  app_retry_web: App recommendations failed to load. Switch to Web mode manually or try again later.
+  immersive_mode: Immersive mode
+  immersive_mode_entry: Enter immersive mode
+  immersive_exit: Exit
+  immersive_exit_title: Exit immersive mode
+  immersive_loading: Loading recommendations…
+  immersive_switching: Switching video…
+  immersive_empty: No playable recommendations yet
+  immersive_no_more: No more recommendations
+  immersive_feed_title: For You
+  immersive_shortcut_hint: Wheel over video / ↑↓ / W S to switch · Esc to exit
+  immersive_views: Views
+  immersive_now_playing: Playing
+  immersive_previous: Previous
+  immersive_next: Next
+  recommendations_retry: Home recommendations repeatedly failed. Refresh and try again.
+  weekly_issue: 'Issue {number}'
+  select_issue: Select issue
+  search_issue: Search issues…
+  issue_not_found: No matching issue found
+  collaboration: Collaboration
 ranking:
   all: All
   original_content: Original Content
@@ -1194,6 +1580,11 @@ anime:
       sat: SAT
       sun: SUN
 history:
+  layout_list: List view
+  layout_grid: Grid view
+  livestreaming: Livestreaming
+  pgc: Shows
+  live: Live
   title: Watch History
   search_watch_history: Search watch history
   clear_all_watch_history: Clear all watch history
@@ -1210,6 +1601,10 @@ history:
   turn_on_watch_history_confirm: Turn on watch history? Are you sure you want to turn on watch history?
 favorites:
   collected_season_prefix: Season
+  view_type: Favorite type
+  view_video: Videos
+  view_season: Collections
+  view_article: Articles
   video_section_title: Favorite videos
   folder_section_title: All folders
   season_section_title: Collected seasons
@@ -1218,11 +1613,8 @@ favorites:
   article_count: 'Articles: {count}'
   article_load_failed: Failed to load favorite articles. Please try again later.
   unfavorite: Unfavorite
-  unfavorite_confirm: >-
-    Remove selected video(s)?
-
-    This operation cannot be reversed. Are you sure you want to remove the
-    selected video(s) from your favorites?
+  unfavorited: Unfavorited
+  unfavorite_item_confirm: Unfavorite this video?
   batch_manage: Batch manage
   batch_select_all: Select page
   batch_unselect_all: Unselect all
@@ -1246,11 +1638,15 @@ favorites:
   sidebar_manage_exit: Exit manage
   select_all: Select all
   unselect_all: Deselect all
-  rename_folder: Rename
-  rename_folder_dialog_title: Rename folder
-  rename_folder_placeholder: Enter folder name
-  rename_folder_empty: Folder name cannot be empty
-  default_folder_locked: The default folder cannot be renamed or deleted
+  edit_folder: Edit folder
+  edit_folder_dialog_title: Edit folder
+  edit_folder_placeholder: Enter folder name
+  edit_folder_empty: Folder name cannot be empty
+  folder_visibility: Folder visibility
+  folder_visibility_desc: Public folders can be viewed by other users
+  folder_public: Public
+  folder_private: Private
+  default_folder_locked: The default folder cannot be edited or deleted
   delete_folders_confirm: |-
     Delete the {count} selected folders?
     Videos in them will be unfavorited as well. This cannot be undone.
@@ -1265,6 +1661,8 @@ version_reminder:
   title: BewlyCat has been updated
   current_version: Current version v{version}
   description: View the release notes and latest updates for this version. After confirmation, this version will not be shown again.
+  usage_guide: Help & tutorials
+  usage_guide_desc: Watch the BewlyCat feature guide video series to learn how each feature works
   github_releases: GitHub Releases
   github_releases_desc: View the full release history and downloads
   bilibili_dynamic: Bilibili posts
@@ -1272,6 +1670,16 @@ version_reminder:
   acknowledge: Got it, don't show this version again
   settings_hint: You can turn off “New version reminders” under Settings → About.
 watch_later:
+  add_open_tabs: Add tabs
+  add_open_tabs_hint: Add Bilibili video, anime and movie playback tabs from all windows to Watch later
+  add_open_tabs_confirm: This will add all open Bilibili video, anime and movie playback tabs from every window to Watch later. Duplicates and existing items will be skipped automatically.
+  confirm_add_open_tabs: Confirm addition
+  reading_open_tabs: Reading open tabs…
+  add_open_tabs_progress: 'Processed {completed} / {total} items'
+  add_open_tabs_account_changed: Your account status changed. Adding has stopped. Please confirm again to retry.
+  adding_open_tabs: Adding…
+  no_open_video_tabs: No supported video, anime or movie playback tabs are open
+  add_open_tabs_result: 'Added {added}, skipped {skipped} duplicates or existing items, failed {failed}'
   title: Watch Later
   clear_all: Clear all watch later
   clear_all_confirm: >-
@@ -1289,6 +1697,8 @@ watch_later:
   play_video: Remove and open video page
   play_in_watch_later: Playlist
   remove_from_watch_later: Remove
+  removed: Removed from Watch Later
+  remove_confirm: Remove from Watch Later?
   layout_list: List view
   layout_grid: Grid view
 search_bar:
@@ -1300,3 +1710,336 @@ search_page:
   loading: Loading...
   no_hot_search_data: No hot search data available
   view_all_esports: View All Esports
+search:
+  page_title: Search - Bilibili
+  results_title: '{keyword} - Search results - Bilibili'
+  comprehensive: Comprehensive
+  most_viewed: Most viewed
+  latest: Latest
+  most_danmaku: Most danmaku
+  most_favorited: Most favorited
+  default_sort: Default
+  fans_desc: Most fans
+  fans_asc: Fewest fans
+  level_desc: Highest level
+  level_asc: Lowest level
+  any_duration: Any duration
+  under_10: Under 10 minutes
+  from_10_to_30: 10–30 minutes
+  from_30_to_60: 30–60 minutes
+  over_60: Over 60 minutes
+  any_date: Any date
+  past_day: Past day
+  past_week: Past week
+  past_half_year: Past six months
+  all_users: All users
+  uploaders: Uploaders
+  regular_users: Regular users
+  verified_users: Verified users
+  all: All
+  videos: Videos
+  bangumi: Anime
+  film_tv: Film & TV
+  users: Users
+  live: Live
+  articles: Articles
+  activity: Events
+  esports_schedule: Esports schedule
+  watch_now: Watch now
+  score: '{score} points'
+  episode_count: '{count} episodes'
+  first_aired: 'First aired: {date}'
+  fans_count: 'Fans: {count}'
+  video_count: 'Videos: {count}'
+  streamers: Streamers
+  live_rooms: Live rooms
+  results_count: '{count} results found'
+  view_more_streamers: 'View more streamers ({count}+)'
+  other: Other
+  start_date: Start date
+  end_date: End date
+  to: to
+  sort: Sort
+  more_filters: More filters
+  duration: Duration
+  date: Date
+  user_type: User type
+  search_failed: Search failed. Please try again later.
+  identity_switcher: Search identity
+  identity_login: Signed in
+  identity_guest: Guest
+  search_error: An error occurred while searching. Please try again later.
+  work: 'Work {index}'
+  month: 'Month {month}'
+  year: '{year}'
+  clear: Clear
+  today: Today
+  weekdays: Sun,Mon,Tue,Wed,Thu,Fri,Sat
+  followed: Followed
+  follow: Follow
+  match_finished: Finished
+  match_upcoming: Upcoming
+  match_live: Live
+moments:
+  filter_all: All
+  filter_video: Videos
+  filter_pgc: Anime & shows
+  filter_article: Articles
+  last_seen: Last seen here
+  newer_above: Newer posts above
+  jump_to_latest: Back to latest
+  jump_to_last_seen: Jump to where you left off
+  emoji: Emoji
+  view: View
+  charged_unlock: Unlock with charging
+  reserved: Reserved
+  reserve: Reserve
+  popularity: '{count} popularity'
+  charging_exclusive: Charging exclusive
+  charging_unlock_hint: Charge this uploader to unlock viewing
+  charging_exclusive_post: Charging-exclusive post
+  go_charge: Charge now
+  vote_ongoing: Ongoing
+  vote_ended: Ended
+  vote_loading: Loading poll
+  vote_load_failed: Failed to load poll
+  vote_retry: Retry
+  vote_participants: '{count} participants'
+  vote_select_up_to: 'Select up to {count} options'
+  vote_submit: Vote
+  vote_submitted: Voted
+  vote_selected: You selected this option
+  vote_time_day: '{count}d '
+  vote_time_hour: '{count}h '
+  vote_time_minute: '{count}m'
+  vote_ends_in: 'Ends in {time}'
+  login_to_vote: Log in to vote
+  vote_submit_failed: Failed to vote. Please try again later.
+  vote_submit_succeeded: Vote submitted
+  forwarded_post: Forwarded a post
+  bilibili_user: Bilibili user
+  original_author: Original author
+  live_post: Live post
+  video_post: Uploaded a video
+  image_post: Image post
+  text_post: Text post
+  original_post: Original post
+  login_to_like: Log in to like posts
+  like_failed: Failed to like post
+  like_failed_retry: Failed to like post. Please try again later.
+  login_to_reserve: Log in to make a reservation
+  cancel_reserve_failed: Failed to cancel reservation
+  reserve_failed: Failed to reserve
+  reserve_succeeded: Reservation successful
+  reserve_cancelled: Reservation cancelled
+  reserve_operation_failed: Reservation failed. Please try again later.
+  login_to_watch_later: Log in to add to Watch later
+  watch_later_info_failed: Unable to get Watch later information for this video
+  watch_later_operation_failed: Watch later operation failed. Please try again later.
+  user_info: Post author information
+  following: Following
+  followers: Followers
+  posts: Posts
+  publish: Publish post
+  live_now: Live
+  group_label: Post groups
+  all_posts: All posts
+  wanted_only: Wanted uploaders only
+  cancel_wanted_only: Stop showing wanted uploaders only
+  wanted_scope_hint: Available only for All and Videos
+  wanted: Wanted
+  scroll_left: Scroll frequently visited list left
+  scroll_right: Scroll frequently visited list right
+  frequent_uploaders: Frequently visited uploaders
+  has_updates: Has updates
+  pin_uploader: Pin uploader
+  no_recent_updates: No recent updates
+  add_wanted_first: Add wanted uploaders in Settings first
+  empty: No posts to display
+  recheck: Check again
+  reload: Reload
+  loading_more: Loading and preparing more posts…
+  new_tab: Open in new tab
+  close: Close
+  live_room: Live room
+  video_playback: Video playback
+  detail: Post details
+  opening_live: Opening live room…
+  opening_video: Opening video…
+  opening_forward: Opening forwarded post…
+  loading_detail: Loading post details…
+  author_detail: '{name} details'
+  image_viewer: Post image viewer
+  close_image_viewer: Close image viewer
+  enlarged_image: Enlarged post image
+  previous_image: Previous image
+  next_image: Next image
+  zoom_out: Zoom out
+  zoom_in: Zoom in
+  fit_window: Fit to window
+  zoom_input: Zoom level. Enter a percentage, then press Enter or leave the field to apply
+  rotate_clockwise: Rotate clockwise
+moment_card:
+  repost_pending: This repost is still being submitted. Please wait.
+  repost_placeholder: Add a message (optional)
+  repost_login: 'Log in, or refresh the page and try again'
+  repost_failed: Repost failed. Please try again.
+  repost_success: Reposted successfully
+  repost_mention: Search users to mention
+  repost_topic: Choose a topic
+  repost_commercial: Commercial disclosure
+  repost_mentions_limit: 'You can mention up to {count} users'
+  repost_emoji_limit: You can add up to 20 animated emotes
+  repost_too_long: Message exceeds the character limit
+  repost_retry: Retry
+  repost_no_results: No results
+  lottery_details: Giveaway details
+  repost: Repost
+  comment_sex_male: Male
+  comment_sex_female: Female
+  expand_comment_replies: View all {count} replies
+  collapse_comment_replies: Collapse replies
+  collapse_comments: Collapse comments
+  comments_sort: Comment sort order
+  comments_sort_hot: Top
+  comments_sort_latest: Newest
+  comments_preview: Comment preview
+  comments_unavailable: Comments are currently unavailable for this post
+  comments_load_failed: Failed to load comments
+  comment_like_failed: Failed to like comment. Please try again.
+  comment_host: Thread author
+  comment_missing_parent: Comment not on this page or deleted
+  expand_comment_thread: Expand this comment and replies
+  collapse_comment_thread: Collapse this comment and replies
+  comment_image: View comment image {index}
+  comments_retry: Retry
+  load_comment_replies: Load more replies
+  comments_empty: No comments yet
+  comment_placeholder: Leave a friendly comment
+  comment_login: Log in to post comments
+  comment_send: Post
+  comment_send_shortcut: Ctrl / ⌘ + Enter to send
+  comment_send_keys: Ctrl / ⌘ + Enter
+  comment_reply: Reply
+  comment_reply_to: "Reply to {'@'}{name}"
+  comment_send_failed: Failed to post the comment. Please try again later
+  comment_delete_confirm: Confirm delete
+  comment_delete_failed: Failed to delete the comment. Please try again later
+  comment_image_add: Add images
+  comment_image_remove: Remove image {index}
+  comment_sync_repost: Also repost to my feed
+  comment_image_limit: You can add up to {count} images
+  comment_image_invalid: Only PNG, JPG, GIF, or WebP images are supported
+  comment_image_too_large: Each image must be {size} MB or smaller
+  comment_image_upload_failed: Failed to upload the image. Please try again later
+  editor_load_failed: Failed to load. Please try again
+  video_post: Uploaded a video
+  cancel_reservation: Cancel reservation
+  reserve: Reserve
+  open_space: Open {name}'s profile
+  just_now: Just now
+  charging_exclusive: Charging exclusive
+  live_post: Live post
+  open_original_video: 'Open original video: {title}'
+  author_images: '{name} post images'
+  view_author_images: View {name}'s post images
+  gallery_region: '{images}, scroll horizontally to view'
+  view_image: View image {index} of {images}
+  open_origin_moment: View {name}'s original post
+  view_details: View details
+  view_original_post: View original post
+  additional: Additional content
+  view_hot_comment: View popular comment
+  hot_comment: Popular comment
+  open_dialog: Open post in dialog
+  open_dialog_short: Open in dialog
+  open_new_tab: Open post in new tab
+  open_new_tab_short: Open in new tab
+  view_comments: View comments
+  live_popularity: 'Live popularity: {value}'
+  no_data: No data
+  live_now: Live now
+  expand_text: Show full text
+  collapse_text: Collapse text
+  like_unsupported: Likes are unavailable for this post
+  unlike: Unlike
+  like: Like
+  copy_link: Copy post link
+  report: Report
+  delete: Delete post
+  delete_title: Delete post
+  delete_confirm: Are you sure you want to delete this post?
+  delete_success: Post deleted
+  delete_failed: Failed to delete the post. Please try again later
+  report_title: Report post
+  report_select_reason: Select a reason for reporting
+  report_remark_placeholder: Describe the issue and where it appears
+  report_remark_required: Please describe the issue when choosing "Other"
+  report_success: Report submitted
+  report_failed: Failed to submit the report. Please try again later
+  report_reasons:
+    spam: Spam or ads
+    inciting_conflict: Inciting conflict
+    pornography: Pornography
+    personal_attack: Personal attack
+    illegal_content: Illegal content
+    political_rumors: Political rumors
+    social_event_rumor: Rumors about social events
+    false_information: False information
+    illegal_link: Links to illegal content
+    other: Other
+user_card:
+  followed: Followed
+  follow: Follow
+  empty_bio: This user has not written a bio yet.
+  live_now: Live now
+  submissions: '{count} submissions'
+  followers: '{count} followers'
+widescreen:
+  resize_sidebar: Resize widescreen sidebar
+  resize_sidebar_title: Drag to resize; double-click to restore the default width
+  show_narrow_right: Show narrow right sidebar
+  show_narrow_left: Show narrow left sidebar
+  collapse_right: Collapse right sidebar
+  collapse_left: Collapse left sidebar
+  exit: Exit
+  exit_title: Exit Bewly widescreen
+  loading: Loading widescreen mode…
+  exit_overlay: Exit overlay
+  comments: Comments
+  danmaku: Danmaku
+  episodes: Episodes
+  collapse: Collapse
+  expand_more: Expand more
+  comments_loading: Loading comments
+  danmaku_loading: Loading danmaku
+  recommendations: Recommendations
+  list_loading: Loading list
+player_state:
+  muted: Muted
+  unmuted: Unmuted
+  no_captions: This video has no captions
+  speed: 'Speed {rate}'
+  danmaku: 'Danmaku {state}'
+  volume: 'Volume {volume}%'
+  on: On
+  off: Off
+vertical_video:
+  zoom_in: Zoom in
+  zoom_out: Zoom out
+  adjust_area: Adjust vertical-video zoom area
+favorite_dialog:
+  clear_selected: Clear selected
+  folder_full: This favorite folder is full and cannot be added
+inject:
+  page_prefix: 'Page {current}, of'
+  page_number: 'Page {current}'
+  page_separator: ', of '
+  page_total: ', of {total} pages'
+  all_pages: All pages
+  select_reply_page: Select reply page
+  of: of
+  loading: Loading…
+  load_more: Load more
+  expand_all_replies: Load all
+  load_reply_pages: 'Load {count} pages'

@@ -85,6 +85,8 @@ let galleryFitObservers: ResizeObserver[] = []
 let layoutReadyNotified = false
 let setupDomReadyListener: (() => void) | null = null
 let setupRootReadyRetryTimer: number | null = null
+/** 父页面（动态 Dialog）显式同步的视口宽；跨源时 window.top 不可读，以此为准 */
+let parentViewportWidth = 0
 
 const BASE_CSS = `
 html.momentsPage.drawer.bewly-opus-layout #bili-header-container,
@@ -260,7 +262,7 @@ html.momentsPage.drawer.bewly-opus-layout.bewly-opus-article-mode .opus-toc {
 }
 `
 
-/** 评论区固定页宽 29%；媒体列吃剩余宽度。长图（≤1:2）宽占满可纵向滚动 */
+/** 信息区固定占页宽 29%；媒体列吃剩余宽度。长图（≤1:2）宽占满可纵向滚动 */
 const OPUS_DETAIL_COMMENT_PAGE_RATIO = 0.29
 const OPUS_DETAIL_LONG_IMAGE_RATIO = 0.5
 /** 高度占满后左右留白不足时，至少留出的单侧间距 */
@@ -283,7 +285,8 @@ html.momentsPage.drawer.bewly-opus-layout .bewly-opus-split {
   inset: 0 !important;
   z-index: 20 !important;
   display: grid !important;
-  grid-template-columns: minmax(var(--bewly-opus-comment-width, 29%), 1fr) var(--bewly-opus-comment-width, 29%) !important;
+  /* 弹窗达到宽度上限时只压缩媒体列，信息列保留完整阅读宽度。 */
+  grid-template-columns: minmax(0, 1fr) var(--bewly-opus-comment-width, 29%) !important;
   column-gap: 0 !important;
   width: 100% !important;
   height: 100% !important;
@@ -833,6 +836,21 @@ html.momentsPage.drawer.bewly-opus-layout .bewly-opus-viewer__zoom {
   font-size: 13px !important;
   font-variant-numeric: tabular-nums !important;
 }
+html.momentsPage.drawer.bewly-opus-layout .bewly-opus-viewer__zoom {
+  width: 64px !important;
+  height: 30px !important;
+  padding: 0 4px !important;
+  border: 0 !important;
+  border-radius: 999px !important;
+  outline: none !important;
+  color: inherit !important;
+  background: transparent !important;
+  transition: background-color 0.15s ease !important;
+}
+html.momentsPage.drawer.bewly-opus-layout .bewly-opus-viewer__zoom:hover,
+html.momentsPage.drawer.bewly-opus-layout .bewly-opus-viewer__zoom:focus {
+  background: rgba(255, 255, 255, 0.14) !important;
+}
 html.momentsPage.drawer.bewly-opus-layout .bewly-opus-viewer__divider {
   width: 1px !important;
   height: 24px !important;
@@ -870,6 +888,7 @@ html.momentsPage.drawer.bewly-opus-layout .bewly-opus-split__panel .bili-opus-vi
 html.momentsPage.drawer.bewly-opus-layout .bewly-opus-split__panel .opus-modules,
 html.momentsPage.drawer.bewly-opus-layout .bewly-opus-split__panel .opus-module,
 html.momentsPage.drawer.bewly-opus-layout .bewly-opus-split__panel .opus-module-content,
+html.momentsPage.drawer.bewly-opus-layout .bewly-opus-split__panel .opus-paragraph,
 html.momentsPage.drawer.bewly-opus-layout .bewly-opus-split__panel .opus-paragraph-children,
 html.momentsPage.drawer.bewly-opus-layout .bewly-opus-split__panel .opus-module-title,
 html.momentsPage.drawer.bewly-opus-layout .bewly-opus-split__panel .opus-module-author,
@@ -882,6 +901,15 @@ html.momentsPage.drawer.bewly-opus-layout .bewly-opus-split__panel .bili-comment
   padding-left: 0 !important;
   padding-right: 0 !important;
   box-sizing: border-box !important;
+}
+/* 原站段落可能保留详情页固定宽度；在窄评论列内强制按可用宽度重新换行。 */
+html.momentsPage.drawer.bewly-opus-layout .bewly-opus-split__panel .opus-module-content,
+html.momentsPage.drawer.bewly-opus-layout .bewly-opus-split__panel .opus-paragraph,
+html.momentsPage.drawer.bewly-opus-layout .bewly-opus-split__panel .opus-paragraph-children,
+html.momentsPage.drawer.bewly-opus-layout .bewly-opus-split__panel .opus-module-title {
+  min-width: 0 !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
 }
 html.momentsPage.drawer.bewly-opus-layout .bewly-opus-split__panel img:not(.pswp__img),
 html.momentsPage.drawer.bewly-opus-layout .bewly-opus-split__panel video {
@@ -916,6 +944,9 @@ function isOpusDetailPage(url: string = location.href): boolean {
 }
 
 function getOpusPageWidth() {
+  // Dialog 场景以父页面同步的视口宽为准，保证信息列恒为视口宽的 29%
+  if (parentViewportWidth > 0)
+    return parentViewportWidth
   for (const win of [window.top, window.parent, window]) {
     try {
       const width = win?.innerWidth
@@ -1070,10 +1101,13 @@ function hideIframeLoading() {
 }
 
 function notifyLayoutReady() {
+  // 解除遮罩必须无条件执行：split 被原站重排拆掉后 tryApply 可能重新盖罩，
+  // 若只靠首次调用揭罩，重现的遮罩将永远无法消失（含 10s 兜底路径）。
+  // 通知父页则保持一次性。
+  hideIframeLoading()
   if (layoutReadyNotified)
     return
   layoutReadyNotified = true
-  hideIframeLoading()
   try {
     window.parent.postMessage({ type: LAYOUT_READY_MSG, source: 'bewly-opus' }, '*')
   }
@@ -1124,7 +1158,7 @@ const CATALOG_SELECTORS = [
   '[class*="目录"]',
 ].join(',')
 
-/** 转发纯文字/视频：不做图片左置分栏（由 Moments 列表通过 query 标记） */
+/** 转发动态：保持原站单栏，不做图片左置分栏（由 Moments 列表通过 query 标记） */
 function isPlainOpusRequested(): boolean {
   try {
     const params = new URLSearchParams(window.location.search)
@@ -1140,8 +1174,8 @@ function isPlainOpusRequested(): boolean {
 }
 
 function shouldSkipSplitForForward(_root?: HTMLElement | null): boolean {
-  // 仅当列表明确标记 plain（转发纯文字/视频）时跳过分栏。
-  // 转发图文与普通图文一样抽取原动态相册做左右分栏。
+  // 列表对所有转发（含转发图文）都标记 plain：原页已完整展示被转发内容，
+  // 分栏需等待嵌套相册就绪，会拖慢打开速度。
   return isPlainOpusRequested()
 }
 
@@ -1542,8 +1576,12 @@ function createImageGallery(rawUrls: string[]): HTMLElement {
   viewerToolbar.className = 'bewly-opus-viewer__toolbar'
   const viewerCounter = document.createElement('span')
   viewerCounter.className = 'bewly-opus-viewer__counter'
-  const viewerZoom = document.createElement('span')
+  const viewerZoom = document.createElement('input')
+  viewerZoom.type = 'text'
+  viewerZoom.inputMode = 'decimal'
   viewerZoom.className = 'bewly-opus-viewer__zoom'
+  viewerZoom.setAttribute('aria-label', '缩放比例，输入百分比后按回车或移开焦点应用')
+  viewerZoom.title = '缩放比例，输入百分比后按回车或移开焦点应用'
   const viewerDivider = document.createElement('span')
   viewerDivider.className = 'bewly-opus-viewer__divider'
 
@@ -1837,7 +1875,7 @@ function createImageGallery(rawUrls: string[]): HTMLElement {
   const syncViewerTransform = () => {
     viewerImage.style.transform = `translate3d(${viewerPanX}px, ${viewerPanY}px, 0) scale(${viewerScale}) rotate(${viewerRotation}deg)`
     viewerImage.classList.toggle('is-zoomed', viewerScale > 1)
-    viewerZoom.textContent = `${Math.round(viewerScale * 100)}%`
+    viewerZoom.value = `${Math.round(viewerScale * 100)}%`
   }
 
   const resetViewerTransform = () => {
@@ -1849,12 +1887,21 @@ function createImageGallery(rawUrls: string[]): HTMLElement {
   }
 
   const setViewerScale = (scale: number) => {
-    viewerScale = Math.min(4, Math.max(0.25, scale))
+    viewerScale = Math.max(0.25, scale)
     if (viewerScale <= 1) {
       viewerPanX = 0
       viewerPanY = 0
     }
     syncViewerTransform()
+  }
+
+  // 百分比输入在回车或失焦时应用；无效输入还原，过小的值由 setViewerScale 收到 25%
+  const applyViewerZoomInput = () => {
+    const percent = Number.parseFloat(viewerZoom.value.replace(/[%\s]/g, ''))
+    if (Number.isFinite(percent) && percent > 0)
+      setViewerScale(percent / 100)
+    else
+      syncViewerTransform()
   }
 
   const showViewerImage = (nextIndex: number) => {
@@ -1940,6 +1987,21 @@ function createImageGallery(rawUrls: string[]): HTMLElement {
     e.preventDefault()
     e.stopPropagation()
     setViewerScale(viewerScale + 0.25)
+  })
+  viewerZoom.addEventListener('focus', () => viewerZoom.select())
+  viewerZoom.addEventListener('change', applyViewerZoomInput)
+  viewerZoom.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      applyViewerZoomInput()
+      viewerZoom.select()
+    }
+    else if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      syncViewerTransform()
+      viewer.focus({ preventScroll: true })
+    }
   })
   viewerReset.addEventListener('click', (e) => {
     e.preventDefault()
@@ -2146,7 +2208,8 @@ function createImageGallery(rawUrls: string[]): HTMLElement {
   })
 
   viewer.addEventListener('keydown', (e) => {
-    if (!viewerOpen)
+    // 输入缩放比例时不触发查看器快捷键
+    if (!viewerOpen || e.target === viewerZoom)
       return
     if (e.key === 'Escape') {
       e.preventDefault()
@@ -2426,7 +2489,9 @@ function tryApply() {
     return
   }
 
-  showIframeLoading()
+  // 首次就绪后的拆建静默重排，不再重新盖全屏遮罩，避免"露几帧又被盖住"的闪烁
+  if (!layoutReadyNotified)
+    showIframeLoading()
   applySplitLayout(root)
 }
 
@@ -2521,13 +2586,28 @@ export function disposeOpusDetailDrawerLayout() {
   teardownCount = 0
   layoutReadyNotified = false
   lastMutationAt = 0
+  parentViewportWidth = 0
   styleEl = null
   loadingEl = null
 }
 
-function handleOpusDisposeMessage(event: MessageEvent) {
-  if (event.data?.type === 'BEWLY_OPUS_DISPOSE')
+function handleParentMessage(event: MessageEvent) {
+  if (event.source !== window.parent)
+    return
+
+  if (event.data?.type === 'BEWLY_OPUS_DISPOSE') {
     disposeOpusDetailDrawerLayout()
+    return
+  }
+
+  // 父页面同步真实视口宽：信息列固定为视口宽的 29%，与 Dialog 尺寸公式一致
+  if (event.data?.type === 'BEWLY_OPUS_VIEWPORT') {
+    const width = Number(event.data.width)
+    if (Number.isFinite(width) && width > 0) {
+      parentViewportWidth = Math.round(width)
+      syncOpusCommentColumnWidth()
+    }
+  }
 }
 
 export function setupOpusDetailDrawerLayout() {
@@ -2547,9 +2627,9 @@ export function setupOpusDetailDrawerLayout() {
   syncOpusCommentColumnWidth()
   bindOpusViewportResize()
 
-  // 父页关闭 iframe 时销毁内部观察器与媒体
-  window.removeEventListener('message', handleOpusDisposeMessage)
-  window.addEventListener('message', handleOpusDisposeMessage)
+  // 父页关闭 iframe 时销毁内部观察器与媒体；同时接收视口宽同步
+  window.removeEventListener('message', handleParentMessage)
+  window.addEventListener('message', handleParentMessage)
   window.removeEventListener('pagehide', disposeOpusDetailDrawerLayout)
   window.addEventListener('pagehide', disposeOpusDetailDrawerLayout, { once: true })
 

@@ -1,15 +1,20 @@
 import browser from 'webextension-polyfill'
 
-import { BILIBILI_DESKTOP_USER_AGENT, isBilibiliWwwUrl, isPreventMobileRedirectEnabled } from '~/utils/bilibiliDesktopNavigation'
+import { isContentScriptTargetUrl } from '~/constants/contentScript'
+import { BILIBILI_DESKTOP_USER_AGENT, getBilibiliDesktopNavigatorValues, isBilibiliWwwUrl, isPreventMobileRedirectEnabled } from '~/utils/bilibiliDesktopNavigation'
+import { GET_BROWSER_INFO_MESSAGE, getExtensionBrowserInfo } from '~/utils/browserInfo'
+import { onMessage } from '~/utils/messaging'
 
-import { setupAppAuthScheduler } from './appAuthScheduler'
+import { isAppClientRequestUrl, setupAppClient } from './appClient'
 import { setupContentScriptRefreshPrompt } from './contentScriptRefreshPrompt'
+import { setupExtensionCacheStore } from './extensionCacheStore'
 import { setupLoginStateWatcher } from './loginStateWatcher'
 import { setupApiMsgListeners } from './messageListeners/api'
 import { setupTabMsgListeners } from './messageListeners/tabs'
 import { setupSettingsCloudSync } from './settingsCloudSync'
 import { setupSettingsStorageCoordinator } from './settingsStorageCoordinator'
 import { setupTopBarStateBroker } from './topBarStateBroker'
+import { setupWatchLaterStateBroker } from './watchLaterStateBroker'
 import { initWbiKeys } from './wbiSign'
 
 // Initialize extension and set up message handlers
@@ -54,8 +59,7 @@ const isSafariBuild = Boolean(process.env.SAFARI)
 let preventMobileRedirectEnabled = false
 
 async function syncPreventMobileRedirectRule(enabled: boolean) {
-  // Firefox and Safari use webRequest instead of declarativeNetRequest for this
-  if (isFirefoxBuild || isSafariBuild)
+  if (isFirefoxBuild)
     return
 
   try {
@@ -69,17 +73,30 @@ async function syncPreventMobileRedirectRule(enabled: boolean) {
   }
 }
 
+let preventMobileRedirectApplied = false
+
+function applyPreventMobileRedirectSetting(storedSettings: unknown) {
+  const enabled = isPreventMobileRedirectEnabled(storedSettings)
+  // 任一设置项变化都会触发；规则重建在浏览器主进程执行，开关未变时跳过。
+  if (preventMobileRedirectApplied && enabled === preventMobileRedirectEnabled)
+    return Promise.resolve()
+
+  preventMobileRedirectApplied = true
+  preventMobileRedirectEnabled = enabled
+  return syncPreventMobileRedirectRule(enabled)
+}
+
 const preventMobileRedirectReady = browser.storage.local.get('settings').then((result) => {
-  preventMobileRedirectEnabled = isPreventMobileRedirectEnabled(result.settings)
-  return syncPreventMobileRedirectRule(preventMobileRedirectEnabled)
+  // 启动读取期间已收到变更时，变更值更新，不能被启动快照覆盖。
+  if (!preventMobileRedirectApplied)
+    return applyPreventMobileRedirectSetting(result.settings)
 })
 
 browser.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local' || !changes.settings)
     return
 
-  preventMobileRedirectEnabled = isPreventMobileRedirectEnabled(changes.settings.newValue)
-  void syncPreventMobileRedirectRule(preventMobileRedirectEnabled)
+  void applyPreventMobileRedirectSetting(changes.settings.newValue)
 })
 
 // 扩展启动时初始化 WBI 密钥
@@ -93,6 +110,7 @@ function isExtensionUri(url: string) {
 
 // Firefox and Safari specific header handling
 // These browsers use a background page (not a service worker), so webRequest is available.
+// Safari also keeps the declarativeNetRequest rule above, since it may ignore blocking header edits.
 if (isFirefoxBuild || isSafariBuild) {
   browser.webRequest.onBeforeSendHeaders.addListener(
     async (details: any) => {
@@ -103,7 +121,7 @@ if (isFirefoxBuild || isSafariBuild) {
         for (const header of details.requestHeaders || []) {
           const headerName = header.name.toLowerCase()
           if (headerName === 'user-agent') {
-            requestHeaders.push({ name: header.name, value: BILIBILI_DESKTOP_USER_AGENT })
+            requestHeaders.push({ name: header.name, value: getBilibiliDesktopNavigatorValues(header.value || navigator.userAgent).userAgent })
             hasUserAgent = true
           }
           else if (headerName === 'sec-ch-ua-mobile') {
@@ -118,26 +136,44 @@ if (isFirefoxBuild || isSafariBuild) {
         }
 
         if (!hasUserAgent)
-          requestHeaders.push({ name: 'User-Agent', value: BILIBILI_DESKTOP_USER_AGENT })
+          requestHeaders.push({ name: 'User-Agent', value: getBilibiliDesktopNavigatorValues(navigator.userAgent).userAgent })
 
         return { ...details, requestHeaders }
       }
 
-      if (details.documentUrl) {
+      // 后台发出的 APP 接口请求与 PiliPlus 一致：不带 Origin，Referer 固定为主站
+      if (details.documentUrl && isExtensionUri(details.documentUrl) && isAppClientRequestUrl(details.url)) {
+        for (const header of details.requestHeaders || []) {
+          const headerName = header.name.toLowerCase()
+          if (headerName !== 'origin' && headerName !== 'referer')
+            requestHeaders.push(header)
+        }
+        requestHeaders.push({ name: 'Referer', value: 'https://www.bilibili.com' })
+        return { ...details, requestHeaders }
+      }
+
+      if (details.documentUrl && (isExtensionUri(details.documentUrl) || isContentScriptTargetUrl(details.documentUrl))) {
         const url = new URL(details.documentUrl)
         const extensionUri = isExtensionUri(details.documentUrl)
         details.requestHeaders = details.requestHeaders || []
-        for (let i = 0; i < details.requestHeaders.length; i++) {
-          if (details.requestHeaders[i].name.toLowerCase() === 'origin' || details.requestHeaders[i].name.toLowerCase() === 'referer')
-            requestHeaders.push({ name: details.requestHeaders[i].name, value: extensionUri ? 'https://www.bilibili.com' : url.origin })
-          else
-            requestHeaders.push(details.requestHeaders[i])
+        const multiAccountCookieHeader = details.requestHeaders.find(
+          (header: browser.WebRequest.HttpHeaders[number]) => header.name.toLowerCase() === 'firefox-multi-account-cookie',
+        )
 
-          // Firefox-specific: extract cookie from firefox-multi-account-cookie header
-          if (isFirefoxBuild && details.requestHeaders[i].name === 'firefox-multi-account-cookie') {
-            requestHeaders.push({ name: 'cookie', value: details.requestHeaders[i].value })
-          }
+        for (const header of details.requestHeaders) {
+          const headerName = header.name.toLowerCase()
+          if (headerName === 'firefox-multi-account-cookie')
+            continue
+          if (multiAccountCookieHeader && headerName === 'cookie')
+            continue
+          if (headerName === 'origin' || headerName === 'referer')
+            requestHeaders.push({ name: header.name, value: extensionUri ? 'https://www.bilibili.com' : url.origin })
+          else
+            requestHeaders.push(header)
         }
+
+        if (multiAccountCookieHeader)
+          requestHeaders.push({ name: 'cookie', value: multiAccountCookieHeader.value ?? '' })
 
         return { ...details, requestHeaders }
       }
@@ -150,9 +186,12 @@ if (isFirefoxBuild || isSafariBuild) {
 // Setup all message listeners
 setupSettingsStorageCoordinator()
 setupSettingsCloudSync()
+setupExtensionCacheStore()
 setupApiMsgListeners()
+setupAppClient()
 setupTabMsgListeners()
 setupTopBarStateBroker()
-setupAppAuthScheduler()
+setupWatchLaterStateBroker()
 setupContentScriptRefreshPrompt()
 setupLoginStateWatcher()
+onMessage(GET_BROWSER_INFO_MESSAGE, getExtensionBrowserInfo)

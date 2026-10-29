@@ -1,5 +1,5 @@
 import type { MaybeRef } from 'vue'
-import { getCurrentScope, isProxy, onScopeDispose, ref, toRaw, toValue, watch } from 'vue'
+import { computed, getCurrentScope, isProxy, onScopeDispose, reactive, toRaw, toValue, watch } from 'vue'
 import browser from 'webextension-polyfill'
 
 import type { StorageRef } from '~/composables/useStorageLocal'
@@ -23,9 +23,12 @@ import {
 interface UseSettingsStorageOptions<T> {
   onError?: (error: unknown) => void
   onReady?: (value: T) => void
+  normalize?: (value: T) => void
 }
 
 const MAX_MESSAGE_ATTEMPTS = 5
+// 后台繁忙时首屏不能一直等待协调器；超时后先渲染本地存储快照。
+const INITIAL_READ_FALLBACK_DELAY = 1500
 
 class StaleStorageGenerationError extends Error {}
 
@@ -94,7 +97,12 @@ export function useSettingsStorage<T extends object>(
   options: UseSettingsStorageOptions<T> = {},
 ): StorageRef<T> {
   const defaults = cloneValue(toValue(initialValue))
-  const data = ref(cloneValue(defaults)) as StorageRef<T>
+  const state = reactive(cloneValue(defaults)) as T
+  // 保持根对象引用稳定；整份导入/重置也只通知实际变化的设置项。
+  const data = computed({
+    get: () => state,
+    set: (value: T | null | undefined) => writeLocalValue(value ?? defaults),
+  }) as StorageRef<T>
   const onError = options.onError ?? ((error: unknown) => console.error(error))
 
   let applyingCanonicalValue = false
@@ -113,16 +121,43 @@ export function useSettingsStorage<T extends object>(
   let storageGeneration = 0
   let readInFlightGeneration: number | null = null
 
+  function updateReactiveValue(value: T) {
+    const normalizedValue = cloneValue(value)
+    // 在普通快照上完成迁移，避免组件看到未迁移值以及迁移产生的中间状态。
+    options.normalize?.(normalizedValue)
+    const patch = createTopLevelSettingsStoragePatch(asRecord(state), asRecord(normalizedValue))
+
+    applyingCanonicalValue = true
+    try {
+      for (const key of patch.remove)
+        Reflect.deleteProperty(state, key)
+      for (const [key, next] of Object.entries(patch.set))
+        asRecord(state)[key] = next
+    }
+    finally {
+      applyingCanonicalValue = false
+    }
+  }
+
+  function captureLocalChanges() {
+    const nextValue = asRecord(cloneValue(state))
+    const patch = createTopLevelSettingsStoragePatch(observedValue, nextValue)
+    observedValue = nextValue
+    if (!isSettingsStoragePatchEmpty(patch))
+      queuedPatch = mergeSettingsStoragePatches(queuedPatch, patch)
+  }
+
   const renderCanonicalValue = () => {
+    // 后台结果可能早于本轮 watch 执行，先保留尚未进入补丁队列的本地修改。
+    if (!disposed)
+      captureLocalChanges()
     let nextValue = canonicalValue
     if (inFlightPatch)
       nextValue = applySettingsStoragePatch(nextValue, inFlightPatch)
     nextValue = applySettingsStoragePatch(nextValue, queuedPatch)
     const renderedValue = asRecord(cloneValue(nextValue))
 
-    applyingCanonicalValue = true
-    data.value = cloneValue(renderedValue) as T
-    applyingCanonicalValue = false
+    updateReactiveValue(renderedValue as T)
 
     const actualValue = asRecord(cloneValue(data.value))
     const derivedPatch = createTopLevelSettingsStoragePatch(renderedValue, actualValue)
@@ -148,7 +183,7 @@ export function useSettingsStorage<T extends object>(
     renderCanonicalValue()
   }
 
-  const resetStorageGeneration = (epoch: string) => {
+  const resetStorageGeneration = (epoch: string, renderDefaults = true) => {
     storageGeneration++
     currentEpoch = epoch
     canonicalRevision = 0
@@ -156,8 +191,11 @@ export function useSettingsStorage<T extends object>(
     canonicalValue = asRecord(cloneValue(defaults))
     queuedPatch = createEmptySettingsStoragePatch()
     inFlightPatch = null
+    // 存储被清空或替换时，旧 epoch 中尚未批处理的修改也必须一起丢弃。
+    observedValue = asRecord(cloneValue(state))
     persistenceReady = epoch.length > 0
-    renderCanonicalValue()
+    if (renderDefaults)
+      renderCanonicalValue()
   }
 
   const sendWithRetry = async <R>(type: string, payload: unknown, generation: number): Promise<R> => {
@@ -188,7 +226,8 @@ export function useSettingsStorage<T extends object>(
   }
 
   const flushQueuedPatch = async () => {
-    if (disposed || !ready || !persistenceReady || inFlightPatch || isSettingsStoragePatchEmpty(queuedPatch))
+    // scope 结束后仍排空此前捕获的补丁，但不再接收新的本地修改。
+    if (!ready || !persistenceReady || inFlightPatch || isSettingsStoragePatchEmpty(queuedPatch))
       return
 
     const patch = queuedPatch
@@ -209,7 +248,7 @@ export function useSettingsStorage<T extends object>(
       if (generation !== storageGeneration)
         return
       if (!response.accepted || response.epoch !== currentEpoch) {
-        resetStorageGeneration(response.epoch)
+        resetStorageGeneration(response.epoch, false)
         persistenceReady = true
         applyCanonicalValue(response.storedValue, response.revision, true)
         void flushQueuedPatch()
@@ -232,22 +271,20 @@ export function useSettingsStorage<T extends object>(
     }
   }
 
+  function writeLocalValue(value: T) {
+    if (disposed || applyingCanonicalValue)
+      return
+
+    updateReactiveValue(value)
+    captureLocalChanges()
+    void flushQueuedPatch()
+  }
+
   watch(
     data,
-    () => {
-      if (applyingCanonicalValue)
-        return
-
-      const nextValue = asRecord(cloneValue(data.value))
-      const patch = createTopLevelSettingsStoragePatch(observedValue, nextValue)
-      observedValue = nextValue
-      if (isSettingsStoragePatchEmpty(patch))
-        return
-
-      queuedPatch = mergeSettingsStoragePatches(queuedPatch, patch)
-      void flushQueuedPatch()
-    },
-    { deep: true, flush: 'sync' },
+    () => writeLocalValue(state),
+    // Vue 合并同一轮数组操作和多字段修改；界面状态仍同步更新。
+    { deep: true, flush: 'pre' },
   )
 
   const markReady = () => {
@@ -259,12 +296,45 @@ export function useSettingsStorage<T extends object>(
     void flushQueuedPatch()
   }
 
+  // 直接读取 storage.local 不经过后台 service worker，多标签页同时恢复导致
+  // 后台排队时仍能按时挂载；协调器结果稍后到达时按 revision 正常覆盖。
+  const applyLocalSnapshot = async (generation: number) => {
+    if (ready)
+      return
+
+    try {
+      const stored = await browser.storage.local.get([
+        SETTINGS_STORAGE_KEY,
+        SETTINGS_STORAGE_META_KEY,
+      ])
+      if (ready || disposed || generation !== storageGeneration)
+        return
+
+      const meta = normalizeSettingsStorageWriteMeta(stored[SETTINGS_STORAGE_META_KEY])
+      if (meta.epoch && !currentEpoch)
+        currentEpoch = meta.epoch
+      const sameEpoch = !meta.epoch || meta.epoch === currentEpoch
+      // 缺少 epoch 时只渲染，写入仍等协调器补全元数据后再提交。
+      if (meta.epoch && sameEpoch)
+        persistenceReady = true
+      if (sameEpoch && stored[SETTINGS_STORAGE_KEY] != null)
+        applyCanonicalValue(stored[SETTINGS_STORAGE_KEY], meta.revision)
+      markReady()
+    }
+    catch (error) {
+      onError(error)
+    }
+  }
+
   const refreshCanonicalValue = async (markReadyWhenFinished = false) => {
     const generation = storageGeneration
     if (readInFlightGeneration === generation)
       return
 
     readInFlightGeneration = generation
+    const fallbackTimer = markReadyWhenFinished
+      ? setTimeout(() => void applyLocalSnapshot(generation), INITIAL_READ_FALLBACK_DELAY)
+      : undefined
     try {
       const response = await sendWithRetry<SettingsStoragePatchResponse>(SETTINGS_STORAGE_READ_MESSAGE, undefined, generation)
       if (!isPatchResponse(response))
@@ -274,7 +344,7 @@ export function useSettingsStorage<T extends object>(
 
       const epochChanged = currentEpoch.length > 0 && response.epoch !== currentEpoch
       if (epochChanged)
-        resetStorageGeneration(response.epoch)
+        resetStorageGeneration(response.epoch, false)
       else
         currentEpoch = response.epoch
 
@@ -283,10 +353,15 @@ export function useSettingsStorage<T extends object>(
       void flushQueuedPatch()
     }
     catch (error) {
-      if (!(error instanceof StaleStorageGenerationError))
+      if (!(error instanceof StaleStorageGenerationError)) {
         onError(error)
+        // 后台不可达时也用本地快照挂载，避免以默认设置渲染。
+        if (markReadyWhenFinished)
+          await applyLocalSnapshot(generation)
+      }
     }
     finally {
+      clearTimeout(fallbackTimer)
       if (readInFlightGeneration === generation)
         readInFlightGeneration = null
       if (markReadyWhenFinished)
@@ -313,7 +388,7 @@ export function useSettingsStorage<T extends object>(
     const meta = metaChange ? normalizeSettingsStorageWriteMeta(metaChange.newValue) : null
     const epochChanged = Boolean(meta?.epoch && currentEpoch && meta.epoch !== currentEpoch)
     if (epochChanged)
-      resetStorageGeneration(meta!.epoch)
+      resetStorageGeneration(meta!.epoch, !settingsChange)
     else if (meta?.epoch && !currentEpoch)
       currentEpoch = meta.epoch
 
@@ -331,6 +406,7 @@ export function useSettingsStorage<T extends object>(
   browser.storage.onChanged.addListener(onStorageChanged)
   if (getCurrentScope()) {
     onScopeDispose(() => {
+      writeLocalValue(state)
       disposed = true
       browser.storage.onChanged.removeListener(onStorageChanged)
     })

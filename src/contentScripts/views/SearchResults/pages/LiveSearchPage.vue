@@ -46,6 +46,7 @@ const {
   userRelations,
   batchQueryUserRelations,
   updateUserRelation,
+  reset: resetUserRelations,
 } = useUserRelations()
 
 // 搜索请求管理
@@ -110,7 +111,7 @@ const gridLayout: GridLayoutType = 'adaptive'
 
 // 转换后的直播间列表
 const transformedLiveRoomList = computed(() => {
-  return liveRoomList.value.map(live => convertLiveRoomData(live))
+  return liveRoomList.value.map((live: any) => convertLiveRoomData(live))
 })
 
 // 检查是否在翻页模式下且不在第一页
@@ -222,7 +223,7 @@ async function performSearch(loadMore: boolean): Promise<boolean> {
     // 仅搜索直播间
     success = await search(
       keyword,
-      params => api.search.searchLiveRoom(params),
+      (params, request) => api.search.searchLiveRoom(params, request),
       {
         page: targetPage,
         page_size: SEARCH_PAGE_SIZES.live,
@@ -234,7 +235,7 @@ async function performSearch(loadMore: boolean): Promise<boolean> {
     // 仅搜索主播
     success = await search(
       keyword,
-      params => api.search.searchLiveUser(params),
+      (params, request) => api.search.searchLiveUser(params, request),
       {
         page: targetPage,
         page_size: SEARCH_PAGE_SIZES.live,
@@ -246,7 +247,7 @@ async function performSearch(loadMore: boolean): Promise<boolean> {
     // 全部（默认使用live类型，包含直播间和主播）
     success = await search(
       keyword,
-      params => api.search.searchLive(params),
+      (params, request) => api.search.searchLive(params, request),
       {
         page: targetPage,
         page_size: SEARCH_PAGE_SIZES.live,
@@ -289,6 +290,7 @@ async function performSearch(loadMore: boolean): Promise<boolean> {
     liveUserTotalResults.value = totalResults.value
   }
   else if (props.filters.subCategory === 'live_room') {
+    resetUserRelations()
     // 直播间搜索：尝试嵌套结构和扁平结构
     const incomingList = Array.isArray(rawData?.result?.live_room)
       ? rawData.result.live_room
@@ -410,7 +412,7 @@ async function handlePageChange(page: number) {
     // 仅搜索直播间
     success = await search(
       keyword,
-      params => api.search.searchLiveRoom(params),
+      (params, request) => api.search.searchLiveRoom(params, request),
       {
         page,
         page_size: SEARCH_PAGE_SIZES.live,
@@ -422,7 +424,7 @@ async function handlePageChange(page: number) {
     // 仅搜索主播
     success = await search(
       keyword,
-      params => api.search.searchLiveUser(params),
+      (params, request) => api.search.searchLiveUser(params, request),
       {
         page,
         page_size: SEARCH_PAGE_SIZES.live,
@@ -434,7 +436,7 @@ async function handlePageChange(page: number) {
     // 全部（默认使用live类型，包含直播间和主播）
     success = await search(
       keyword,
-      params => api.search.searchLive(params),
+      (params, request) => api.search.searchLive(params, request),
       {
         page,
         page_size: SEARCH_PAGE_SIZES.live,
@@ -443,8 +445,10 @@ async function handlePageChange(page: number) {
     )
   }
 
-  if (!success || !lastResponse.value?.data)
+  if (!success || !lastResponse.value?.data) {
+    isPageChanging.value = false
     return
+  }
 
   const rawData = lastResponse.value.data
 
@@ -472,6 +476,7 @@ async function handlePageChange(page: number) {
     liveUserTotalResults.value = totalResults.value
   }
   else if (props.filters.subCategory === 'live_room') {
+    resetUserRelations()
     // 直播间搜索：尝试嵌套结构和扁平结构
     const incomingList = Array.isArray(rawData?.result?.live_room)
       ? rawData.result.live_room
@@ -586,6 +591,7 @@ async function refreshLiveRoomsOnly() {
 }
 
 function resetAll() {
+  resetUserRelations()
   resetSearch()
   resetPagination()
   resetLoadMore()
@@ -631,6 +637,10 @@ defineExpose({
   currentPage,
   totalPages,
 })
+
+function getLiveRoomKey(room: any) {
+  return room.id || room.roomid
+}
 </script>
 
 <template>
@@ -651,11 +661,11 @@ defineExpose({
             && (filters.subCategory === 'all' || filters.subCategory === 'live_user')"
         >
           <div flex items-center gap-3 mb-3>
-            <h3 text="lg $bew-text-1" font-medium>
-              主播
+            <h3 class="bew-section-heading" text="$bew-text-1">
+              {{ t('search.streamers') }}
             </h3>
             <span text="sm $bew-text-3">
-              共找到{{ formatResultCount(filters.subCategory === 'live_user' ? totalResults : (liveUserTotalResults || liveUserList.length)) }}个结果
+              {{ t('search.results_count', { count: formatResultCount(filters.subCategory === 'live_user' ? totalResults : (liveUserTotalResults || liveUserList.length)) }) }}
             </span>
           </div>
           <div grid="~ cols-3 gap-4">
@@ -685,7 +695,7 @@ defineExpose({
               transition-colors duration-200
               @click="handleSwitchToLiveUser"
             >
-              查看更多主播 ({{ Math.max((liveUserTotalResults || 0) - 6, 0) }}+)
+              {{ t('search.view_more_streamers', { count: Math.max((liveUserTotalResults || 0) - 6, 0) }) }}
             </button>
           </div>
         </div>
@@ -693,18 +703,18 @@ defineExpose({
         <!-- 直播间 (下面) - 始终渲染 VideoCardGrid 以支持骨架屏和空状态 -->
         <div v-if="filters.subCategory === 'all' || filters.subCategory === 'live_room'">
           <div v-if="liveRoomList.length > 0" flex items-center gap-3 mb-3>
-            <h3 text="lg $bew-text-1" font-medium>
-              直播间
+            <h3 class="bew-section-heading" text="$bew-text-1">
+              {{ t('search.live_rooms') }}
             </h3>
             <span text="sm $bew-text-3">
-              共找到{{ formatResultCount(filters.subCategory === 'live_room' ? totalResults : (liveRoomTotalResults || liveRoomList.length)) }}个结果
+              {{ t('search.results_count', { count: formatResultCount(filters.subCategory === 'live_room' ? totalResults : (liveRoomTotalResults || liveRoomList.length)) }) }}
             </span>
           </div>
           <VideoCardGrid
             :items="transformedLiveRoomList"
             :grid-layout="gridLayout"
             :transform-item="transformLiveRoom"
-            :get-item-key="(room: any) => room.id || room.roomid"
+            :get-item-key="getLiveRoomKey"
             :loading="isLoading"
             :no-more-content="!hasMore"
             :request-failed="!!error"

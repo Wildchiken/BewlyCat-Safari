@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
+import { watch } from 'vue'
 
-import type { RecommendationMode } from '~/logic'
+import type { AppRecommendationColumn, RecommendationMode } from '~/logic'
+import { settings } from '~/logic/storage'
 import type { Item as AppVideoItem } from '~/models/video/appForYou'
 import type { Item as VideoItem } from '~/models/video/forYou'
 
@@ -17,7 +19,8 @@ export interface VideoCardDisplayData {
     followed: boolean
     mid: number
   }
-  tag?: string
+  category?: string
+  tag?: string | string[]
   view?: number
   viewStr?: string
   danmaku?: number
@@ -52,6 +55,10 @@ export interface ForYouState {
   videoList: VideoElement[]
   appVideoList: AppVideoElement[]
 
+  // APP 推荐分页游标与之前刷新展示过的推荐
+  appFeedIdx?: number
+  appRecentShownKeys?: string[]
+
   // 基础页面状态
   refreshIdx: number
   webFreshIdx1h?: number
@@ -72,6 +79,7 @@ export interface ForYouState {
 
   // 推荐模式，用于避免跨模式恢复旧推荐流
   recommendationMode?: RecommendationMode
+  appRecommendationColumn?: AppRecommendationColumn
 }
 
 export const useForYouStore = defineStore('forYou', () => {
@@ -123,6 +131,12 @@ export const useForYouStore = defineStore('forYou', () => {
       recommendationMode: undefined,
     }
   }
+
+  // The store outlives Home, including while the setting is changed from the Dock.
+  watch(() => settings.value.preserveForYouState, (preserve) => {
+    if (!preserve)
+      resetState()
+  }, { flush: 'sync' })
 
   // 标记为已初始化
   const markAsInitialized = () => {

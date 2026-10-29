@@ -8,8 +8,7 @@ import type { Video } from '~/components/VideoCard/types'
 import { appAuthTokens } from '~/logic'
 import type { DislikeReason } from '~/models/video/appForYou'
 import { Type as ThreePointV2Type } from '~/models/video/appForYou'
-import api from '~/utils/api'
-import { getTvSign, TVAppKey } from '~/utils/authProvider'
+import { ensureFreshAppAccessToken, requestAppClient } from '~/utils/authProvider'
 
 const props = defineProps<{
   modelValue: boolean
@@ -17,7 +16,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (event: 'removed', selectedOpt: { reasonId?: number, feedbackId?: number }): void
+  (event: 'removed'): void
   (event: 'close'): void
 }>()
 
@@ -33,7 +32,8 @@ interface SelectableReason {
   reason: DislikeReason
 }
 
-const selectedOption = ref<{ type: FeedFeedbackType, id: number }>()
+// 同类原因（如多个「频道:xxx」）的 id 相同，只能用在列表中的位置标识选中项
+const selectedIndex = ref<number>(0)
 
 const dislikeReasons = computed(() => props.video?.threePointV2?.find(option => option.type === ThreePointV2Type.Dislike)?.reasons || [])
 const feedbackReasons = computed(() => props.video?.threePointV2?.find(option => option.type === ThreePointV2Type.Feedback)?.reasons || [])
@@ -43,31 +43,24 @@ const selectableOptions = computed<SelectableReason[]>(() => [
   ...feedbackReasons.value.map(toSelectableReason(ThreePointV2Type.Feedback)),
 ])
 
-watch(selectableOptions, (options) => {
-  if (selectedOption.value || options.length === 0)
-    return
+watch(selectableOptions, () => {
+  selectedIndex.value = 0
+})
 
-  selectedOption.value = {
-    type: options[0].type,
-    id: options[0].reason.id,
-  }
-}, { immediate: true })
-
-function selectOption(type: FeedFeedbackType, reason: DislikeReason) {
-  selectedOption.value = { type, id: reason.id }
+function selectOption(index: number) {
+  if (index >= 0 && index < selectableOptions.value.length)
+    selectedIndex.value = index
 }
 
-function isSelected(type: FeedFeedbackType, reason: DislikeReason) {
-  return selectedOption.value?.type === type && selectedOption.value.id === reason.id
-}
-
-function getSelectedPayload(): { reasonId?: number, feedbackId?: number } | undefined {
-  if (!selectedOption.value)
+function getSelectedPayload(): Record<string, number | undefined> | undefined {
+  const option = selectableOptions.value[selectedIndex.value]
+  if (!option)
     return undefined
 
-  return selectedOption.value.type === ThreePointV2Type.Feedback
-    ? { feedbackId: selectedOption.value.id }
-    : { reasonId: selectedOption.value.id }
+  const { id, mid, rid, tag_id } = option.reason
+  return option.type === ThreePointV2Type.Feedback
+    ? { feedback_id: id }
+    : { reason_id: id, mid, rid, tag_id }
 }
 
 function closeDislikeDialog() {
@@ -75,7 +68,7 @@ function closeDislikeDialog() {
   emit('close')
 }
 
-function handleAppDislike() {
+async function handleAppDislike() {
   if (!appAuthTokens.value.accessToken) {
     toast.warning(t('auth.auth_access_key_first'))
     return
@@ -83,64 +76,53 @@ function handleAppDislike() {
 
   const selectedPayload = getSelectedPayload()
   if (!selectedPayload) {
-    toast.warning('未能获取dislikeReasons或feedbacks')
+    toast.warning(t('video_card.feedback_options_unavailable'))
     return
   }
 
   loadingDislikeDialog.value = true
-  // App feed 的 reason_id / feedback_id 来自 three_point_v2，含义与 Web
-  // dislike 的固定 reason_id 不一致，必须继续走 access key 签名的 App 接口。
-  const params = {
-    access_key: appAuthTokens.value.accessToken,
-    goto: props.video?.goto,
-    id: props.video?.param || props.video?.id,
-    reason_id: selectedPayload.reasonId,
-    feedback_id: selectedPayload.feedbackId,
-    build: 1,
-    mobi_app: 'android',
-    appkey: TVAppKey.appkey,
-    ts: Math.floor(Date.now() / 1000).toString(),
-  }
+  try {
+    if (!await ensureFreshAppAccessToken()) {
+      toast.warning(t('auth.auth_access_key_first'))
+      return
+    }
 
-  api.video.dislikeVideo({
-    ...params,
-    sign: getTvSign(params),
-  })
-    .then((res) => {
-      if (res.code === 0) {
-        emit('removed', selectedPayload)
-      }
-      else {
-        toast.error(res.message)
-      }
+    // App feed 的 reason_id / feedback_id 来自 three_point_v2，含义与 Web
+    // dislike 的固定 reason_id 不一致，必须继续走 access key 签名的 App 接口。
+    // 基础参数与 PiliPlus 的 feedDislike 一致；同 id 的原因额外带上 mid / rid / tag_id 区分具体对象
+    const res = await requestAppClient('feedDislike', {
+      access_key: appAuthTokens.value.accessToken,
+      goto: props.video?.goto,
+      id: props.video?.param || props.video?.id,
+      ...selectedPayload,
+      build: 1,
+      mobi_app: 'android',
     })
-    .finally(() => {
-      loadingDislikeDialog.value = false
-    })
+    if (res.code === 0)
+      emit('removed')
+    else
+      toast.error(res.message)
+  }
+  finally {
+    loadingDislikeDialog.value = false
+  }
 }
 
 onKeyStroke((e: KeyboardEvent) => {
-  if (showDislikeDialog.value) {
-    const options = selectableOptions.value
+  if (!showDislikeDialog.value)
+    return
 
-    if (e.key >= '0' && e.key <= '9') {
-      e.preventDefault()
-      const option = options[Number(e.key) - 1]
-      if (option)
-        selectOption(option.type, option.reason)
-    }
-    else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      const currentIndex = options.findIndex(option => selectedOption.value?.type === option.type && selectedOption.value.id === option.reason.id)
-      if (currentIndex > 0)
-        selectOption(options[currentIndex - 1].type, options[currentIndex - 1].reason)
-    }
-    else if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      const currentIndex = options.findIndex(option => selectedOption.value?.type === option.type && selectedOption.value.id === option.reason.id)
-      if (currentIndex < options.length - 1)
-        selectOption(options[currentIndex + 1].type, options[currentIndex + 1].reason)
-    }
+  if (e.key >= '1' && e.key <= '9') {
+    e.preventDefault()
+    selectOption(Number(e.key) - 1)
+  }
+  else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    selectOption(selectedIndex.value - 1)
+  }
+  else if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    selectOption(selectedIndex.value + 1)
   }
 })
 </script>
@@ -158,11 +140,11 @@ onKeyStroke((e: KeyboardEvent) => {
     <ul v-if="dislikeReasons.length > 0" flex="~ col gap-2">
       <li
         v-for="(reason, index) in dislikeReasons"
-        :key="reason.id"
-        :class="{ 'activated-dislike-reason': isSelected(ThreePointV2Type.Dislike, reason) }"
+        :key="index"
+        :class="{ 'activated-dislike-reason': selectedIndex === index }"
         p="x-6 y-4" rounded="$bew-radius" cursor-pointer bg="$bew-fill-1 hover:$bew-fill-2"
         flex="~ gap-2 items-center justify-between"
-        @click="selectOption(ThreePointV2Type.Dislike, reason)"
+        @click="selectOption(index)"
       >
         <div flex="~ gap-2">
           <div
@@ -174,7 +156,7 @@ onKeyStroke((e: KeyboardEvent) => {
           {{ reason.name }}
         </div>
         <Icon
-          v-if="isSelected(ThreePointV2Type.Dislike, reason)" icon="line-md:confirm"
+          v-if="selectedIndex === index" icon="line-md:confirm"
           w-18px h-18px
         />
       </li>
@@ -184,11 +166,11 @@ onKeyStroke((e: KeyboardEvent) => {
       <ul flex="~ col gap-2">
         <li
           v-for="(reason, index) in feedbackReasons"
-          :key="reason.id"
-          :class="{ 'activated-dislike-reason': isSelected(ThreePointV2Type.Feedback, reason) }"
+          :key="index"
+          :class="{ 'activated-dislike-reason': selectedIndex === dislikeReasons.length + index }"
           p="x-6 y-4" rounded="$bew-radius" cursor-pointer bg="$bew-fill-1 hover:$bew-fill-2"
           flex="~ gap-2 items-center justify-between"
-          @click="selectOption(ThreePointV2Type.Feedback, reason)"
+          @click="selectOption(dislikeReasons.length + index)"
         >
           <div flex="~ gap-2">
             <div
@@ -200,7 +182,7 @@ onKeyStroke((e: KeyboardEvent) => {
             {{ reason.name }}
           </div>
           <Icon
-            v-if="isSelected(ThreePointV2Type.Feedback, reason)" icon="line-md:confirm"
+            v-if="selectedIndex === dislikeReasons.length + index" icon="line-md:confirm"
             w-18px h-18px
           />
         </li>

@@ -77,6 +77,12 @@ export interface FavoriteSeasonInfo {
 }
 
 export interface FavoriteSeasonMedia {
+  /** 公开收藏夹资源保留原始类型及失效状态 */
+  type?: number
+  attr?: number
+  intro?: string
+  page?: number
+  fav_time?: number
   id: number
   title: string
   cover: string
@@ -86,7 +92,7 @@ export interface FavoriteSeasonMedia {
   upper: {
     mid: number
     name: string
-    /** fav/season/list 通常不返回；由客户端按 mid 补全 */
+    /** fav/season/list 通常不返回，缺失时不额外请求头像 */
     face?: string
   }
   cnt_info: {

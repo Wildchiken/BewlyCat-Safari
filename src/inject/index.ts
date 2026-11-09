@@ -5035,7 +5035,6 @@ else if (shouldInitializePageScript) {
       const isFirstTime = !settingsReady
       currentSettings = pageSettings
       localLoudness?.update({ enabled: pageSettings.localLoudnessEnabled, target: pageSettings.localLoudnessTarget, strength: pageSettings.localLoudnessStrength / 100 })
-      localLoudness?.setAudioDelayEnabled(pageSettings.playerAdjustmentEnabled)
       preventMobileRedirectEnabled = pageSettings.preventMobileRedirect
       if (pageSettings.observeTripleRequests)
         installTripleRequestHooks()

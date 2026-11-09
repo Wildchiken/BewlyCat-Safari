@@ -25,9 +25,9 @@ const { t } = useI18n()
       </SettingsItem>
     </template>
   </SettingsItemGroup>
-  <SettingsItemGroup :title="t('settings.player_adjustment.title')">
-    <SettingsItem :title="t('settings.player_adjustment.show_button')" :desc="t('settings.player_adjustment.show_button_desc')" right-width="auto">
-      <Radio v-model="settings.showPlayerAdjustmentButton" />
+  <SettingsItemGroup :title="t('settings.player_adjustment.title')" :desc="t('settings.player_adjustment.desc')">
+    <SettingsItem :title="t('settings.player_adjustment.show_picture')" :desc="t('settings.player_adjustment.show_picture_desc')" right-width="auto">
+      <Radio v-model="settings.playerPictureAdjustmentEnabled" />
     </SettingsItem>
   </SettingsItemGroup>
 </template>

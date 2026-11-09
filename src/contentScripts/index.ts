@@ -12,6 +12,7 @@ import { setupApp } from '~/logic/common-setup'
 import { useTopBarStore } from '~/stores/topBarStore'
 import RESET_BEWLY_CSS from '~/styles/reset.css?raw'
 import api from '~/utils/api'
+import { setupApiFailureDiagnostics } from '~/utils/apiDiagnostics'
 import { applyBewlyWidescreen, BEWLY_WIDESCREEN_USER_EXIT, exitBewlyWidescreen, isBewlyWidescreenActive, isBewlyWidescreenEngaged, isUserNativeLayoutModeClick, prepareBewlyWidescreenLoading, refreshBewlyWidescreenForNavigation } from '~/utils/bewlyWidescreen'
 import { isBilibiliWwwUrl } from '~/utils/bilibiliDesktopNavigation'
 import { isInBilibiliLiveContext } from '~/utils/bilibiliLive'
@@ -51,10 +52,12 @@ import { setupNotificationStateInvalidation } from './features/notificationState
 import { setupOpusDetailDrawerLayout } from './features/opusDetailDrawerLayout'
 import { setupOriginalMomentsFilter } from './features/originalMomentsFilter'
 import { setupOriginalMomentsFoldComments } from './features/originalMomentsFoldComments'
+import { setupSettingsPageBridge } from './features/settingsPageBridge'
 import { setupVideoWatchProgress } from './features/videoWatchProgress'
 import { setupWatchLaterAutoRemove } from './features/watchLaterAutoRemove'
 import { initFullscreenWheelVolume } from './fullscreenWheelVolume'
 import { initImmersiveFeedFrame } from './immersiveFeedFrame'
+import { initKeyboardVolumeStep } from './keyboardVolumeStep'
 import { initListenVideoFeature } from './listenVideoFeature'
 import { initLocalLoudnessControl } from './localLoudnessControl'
 import type { PageLoadingGuard } from './pageLoading'
@@ -89,6 +92,7 @@ const contentScriptRuntimeUrl = browser.runtime.getURL('')
 
 if (shouldInitializeContentScript) {
   contentScriptGlobal.__BEWLYCAT_CONTENT_SCRIPT_INITIALIZED__ = true
+  setupApiFailureDiagnostics()
   // 先于 B 站脚本注册快捷键监听，覆盖其默认快捷键时才能先拦截事件。
   installShortcutListener()
   browser.runtime.onMessage.addListener((message: unknown) => {
@@ -272,6 +276,7 @@ else if (shouldInitializeContentScript) {
   setupWatchLaterAutoRemove()
   setupFavoriteOrganizerTripleSync()
   setupVideoWatchProgress()
+  setupSettingsPageBridge()
   // Fix `OverlayScrollbars` not working in Firefox
   // https://github.com/fingerprintjs/fingerprintjs/issues/683#issuecomment-881210244
   if (isFirefox) {
@@ -616,6 +621,12 @@ else if (shouldInitializeContentScript) {
     if (!playerModeSettingsReady
       || nativeVideoHeaderTasksPaused
       || document.visibilityState !== 'visible') {
+      clearPlayerModeRetry()
+      return
+    }
+
+    // 播放器增强关闭时完全交给 B 站原生播放器，快捷键由 onDOMLoaded 单独接管。
+    if (!settings.value.enablePlayerEnhancements) {
       clearPlayerModeRetry()
       return
     }
@@ -1138,7 +1149,8 @@ else if (shouldInitializeContentScript) {
           autoContinuationNavigationKey = undefined
 
         // 抽屉父文档只同步视频 URL，实际宽屏和评论更新由 iframe 负责。
-        const willApplyBewlyWidescreen = !document.documentElement.classList.contains(BEWLY_IFRAME_DRAWER_HOST_CLASS)
+        const willApplyBewlyWidescreen = settings.value.enablePlayerEnhancements
+          && !document.documentElement.classList.contains(BEWLY_IFRAME_DRAWER_HOST_CLASS)
           && resolveNavigationPlayerMode() === 'bewlyWidescreen'
           && !isFestivalPage()
         const shouldReloadWidescreenNavigation = pendingWidescreenReloadNavigationKey === currentVideoNavigationKey
@@ -1175,7 +1187,7 @@ else if (shouldInitializeContentScript) {
         if (videoCommentIdentifier)
           void reloadCommentsForWidescreenNavigation(currentVideoNavigationKey, navigationRequestId, videoCommentIdentifier)
         // 如果是视频页面内部跳转，延迟执行滚动
-        if (isVideoOrBangumiPage()) {
+        if (isVideoOrBangumiPage() && settings.value.enablePlayerEnhancements) {
           handleVideoPageNavigation()
         }
       }
@@ -1357,6 +1369,10 @@ else if (shouldInitializeContentScript) {
   // 添加搜索页 bili-video-card 链接点击事件处理
   function setupBiliVideoCardLinkClickHandler() {
     document.addEventListener('click', (event) => {
+      // 打开方式属于 Bewly 页面的设置，关闭后设置项已隐藏，交还给原生搜索页处理。
+      if (settings.value.useOriginalBilibiliHomepage)
+        return
+
       const target = event.target as HTMLElement
 
       const linkElement = target.closest('.bili-video-card a, .bili-video-card__wrap a')
@@ -1481,7 +1497,7 @@ else if (shouldInitializeContentScript) {
       cleanupBilibiliScripts()
 
       // 只有「顶栏可见性 + 原版顶栏」同时开启时才 portal 原生顶栏。
-      if (shouldShowOriginalBilibiliTopBar(settings.value.enableTopBar, settings.value.useOriginalBilibiliTopBar)) {
+      if (shouldShowOriginalBilibiliTopBar(settings.value.enableTopBarModule, settings.value.enableTopBar, settings.value.useOriginalBilibiliTopBar)) {
         ensureOriginalBilibiliTopBarAppended(document)
       }
 
@@ -1515,18 +1531,21 @@ else if (shouldInitializeContentScript) {
 
     // 需早于快捷键注册与宽屏布局：接管侧栏面板并优先处理沉浸式切换按键
     initImmersiveFeedFrame()
-    initVideoAspectRatioMemory()
-    initVideoQualityMemory()
-    initVideoScreenshotControl()
-    initVideoPipButtonControl()
-    initListenVideoFeature()
-    initLocalLoudnessControl()
-    initAmbilightControl()
+    if (settings.value.enablePlayerEnhancements) {
+      initVideoAspectRatioMemory()
+      initVideoQualityMemory()
+      initVideoScreenshotControl()
+      initVideoPipButtonControl()
+      initListenVideoFeature()
+      initLocalLoudnessControl()
+      initAmbilightControl()
+      runWhenNativeVideoHeaderStable(initBewlyWidescreenControl)
+      initTouchPlayerGestures()
+      initFullscreenWheelVolume()
+      initKeyboardVolumeStep()
+    }
     if (isVideoPlaybackPage() || isVideoOrBangumiPage())
       setupShortcutHandlers()
-    runWhenNativeVideoHeaderStable(initBewlyWidescreenControl)
-    initTouchPlayerGestures()
-    initFullscreenWheelVolume()
 
     // Initialize Favorite Dialog Enhancement (for video pages)
     if (isVideoOrBangumiPage()) {
@@ -1773,7 +1792,7 @@ else if (shouldInitializeContentScript) {
     if (!event.data || typeof event.data !== 'object' || Array.isArray(event.data))
       return
 
-    const { type, isDark, darkModeBaseColor, useOriginalBilibiliTopBar, enableTopBar } = event.data
+    const { type, isDark, darkModeBaseColor, useOriginalBilibiliTopBar, enableTopBar, enableTopBarModule } = event.data
 
     if (type === IFRAME_DARK_MODE_CHANGE) {
       // Check if we should apply selective dark mode (plugin UI only) on festival pages
@@ -1814,15 +1833,17 @@ else if (shouldInitializeContentScript) {
       if (typeof useOriginalBilibiliTopBar !== 'boolean')
         return
 
-      const showOriginal = typeof enableTopBar === 'boolean'
-        ? shouldShowOriginalBilibiliTopBar(enableTopBar, useOriginalBilibiliTopBar)
-        : useOriginalBilibiliTopBar
-      document.documentElement.classList.toggle('remove-top-bar', !showOriginal)
+      // 模块关闭时顶栏完全交还给页面。
+      const moduleEnabled = enableTopBarModule !== false
+      const showOriginal = moduleEnabled && (typeof enableTopBar === 'boolean'
+        ? shouldShowOriginalBilibiliTopBar(moduleEnabled, enableTopBar, useOriginalBilibiliTopBar)
+        : useOriginalBilibiliTopBar)
+      document.documentElement.classList.toggle('remove-top-bar', moduleEnabled && !showOriginal)
 
       const hideCustomNavbar = typeof enableTopBar === 'boolean'
         ? enableTopBar
         : !useOriginalBilibiliTopBar
-      document.documentElement.classList.toggle('remove-custom-navbar', hideCustomNavbar)
+      document.documentElement.classList.toggle('remove-custom-navbar', moduleEnabled && hideCustomNavbar)
 
       if (showOriginal) {
         resetBilibiliTopBarInlineStyles(document)

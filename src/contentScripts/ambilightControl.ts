@@ -7,7 +7,7 @@ import type { AmbilightBackdrop, AmbilightBaseValues } from '~/utils/ambilight/t
 import { DEFAULT_BASE_VALUES, getAmbilightTextColors, getBackdrop, parseBaseValue } from '~/utils/ambilight/textContrast'
 import type { AmbilightBackdropAnchor, AmbilightBackdropSample, AmbilightDisplayMode, AmbilightEngineOptions, AmbilightTone } from '~/utils/ambilight/types'
 import { isBewlyWidescreenActive } from '~/utils/bewlyWidescreen'
-import { isVideoOrBangumiPage, isVideoPlaybackPage, isWatchLaterListPage } from '~/utils/main'
+import { isVideoOrBangumiPage, isVideoPlaybackPage } from '~/utils/main'
 import { getVideoElement } from '~/utils/player'
 
 let initialized = false
@@ -52,10 +52,11 @@ const BACKDROP_REGIONS: readonly BackdropRegion[] = [
     // 标题与播放量、日期等信息行
     name: 'top',
     selector: '.video-info-container, #viewbox_report',
-    points: rect => [
-      [rect.left + rect.width * 0.25, rect.top + rect.height * 0.35],
-      [rect.left + rect.width * 0.25, rect.bottom - 14],
-    ],
+    // 光晕沿视频上缘的颜色横向变化（泊松扩散几乎不模糊），左右各取一列
+    points: rect => [0.25, 0.75].flatMap(fx => [
+      [rect.left + rect.width * fx, rect.top + rect.height * 0.35],
+      [rect.left + rect.width * fx, rect.bottom - 14],
+    ] as Array<[number, number]>),
   },
   {
     // UP 主信息、弹幕列表、合集与推荐列表
@@ -75,7 +76,8 @@ const BACKDROP_REGIONS: readonly BackdropRegion[] = [
     // 播放器下方的弹幕发送栏与三连工具栏
     name: 'bottom',
     selector: '.bpx-player-sending-area, #arc_toolbar_report, .video-toolbar-container, #playlistToolbar',
-    points: rect => [[rect.left + rect.width * 0.3, rect.top + rect.height / 2]],
+    // 紧贴视频下缘，光晕颜色随视频底边横向变化，沿宽度取三点
+    points: rect => [0.15, 0.5, 0.85].map(fx => [rect.left + rect.width * fx, rect.top + rect.height / 2] as [number, number]),
   },
 ]
 
@@ -246,10 +248,11 @@ function resetTextContrast() {
   clearTextContrast()
 }
 
+// 稍后再看列表页（/watchlater/list）只是视频网格，页内广告等播放器会被误认作目标视频；
+// 稍后再看的实际播放走 /list/watchlater，已由 isVideoPlaybackPage 覆盖
 function isSupportedPage(): boolean {
   return isVideoPlaybackPage()
     || isVideoOrBangumiPage()
-    || isWatchLaterListPage(location.href)
 }
 
 // iframe 抽屉会把宿主页地址栏临时替换为视频 URL，宿主页本身不是播放页，
@@ -310,6 +313,11 @@ function getEngineOptions(): AmbilightEngineOptions {
     blur: settings.value.ambilightBlur,
     saturation: settings.value.ambilightSaturation,
     fps: settings.value.ambilightFps,
+    diffusion: settings.value.ambilightDiffusion,
+    diffusionQuality: settings.value.ambilightDiffusionQuality,
+    diffusionDecay: settings.value.ambilightDiffusionDecay,
+    diffusionIterations: settings.value.ambilightDiffusionIterations,
+    diffusionFeather: settings.value.ambilightDiffusionFeather,
   }
 }
 
@@ -407,9 +415,10 @@ function attachEngineListeners() {
   document.addEventListener('visibilitychange', () => {
     engine?.setHidden(document.hidden)
   }, { signal })
-  // 滚动与尺寸变化由 invalidate 内部 RAF 合并调度
+  // 尺寸/播放器模式变化需要重算本地布局；滚动交给浏览器原生滚动，
+  // 这里只做视口可见性、sticky/fixed 兜底和文字背景采样。
   window.addEventListener('resize', updateLayout, { passive: true, signal })
-  window.addEventListener('scroll', updateLayout, { passive: true, signal })
+  window.addEventListener('scroll', () => engine?.handleScroll(), { passive: true, signal })
 }
 
 function teardownEngine() {
@@ -497,6 +506,11 @@ export function initAmbilightControl() {
         settings.value.ambilightBlur,
         settings.value.ambilightSaturation,
         settings.value.ambilightFps,
+        settings.value.ambilightDiffusion,
+        settings.value.ambilightDiffusionQuality,
+        settings.value.ambilightDiffusionDecay,
+        settings.value.ambilightDiffusionIterations,
+        settings.value.ambilightDiffusionFeather,
       ],
       () => {
         if (settings.value.ambilightEnabled)

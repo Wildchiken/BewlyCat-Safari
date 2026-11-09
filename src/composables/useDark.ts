@@ -245,7 +245,10 @@ export function useDark() {
     // Only used as a temporary solution, which will eventually be removed
     // It seems like Bilibili already supports dark mode when the `bili_dark` class is added to the `html` element
     // but it's not yet fully refined.
-    setBiliDarkSuppressed(currentAppColorScheme.value === 'dark')
+    // Safari 中 B 站评论等 Web Components 依赖 bili_dark 切换内部深色样式，剥离后会显示浅色主题的黑字；
+    // 动态页纹理层已由 momentsPage.scss 隐藏，因此 Safari 保留 bili_dark。
+    // eslint-disable-next-line node/prefer-global/process
+    setBiliDarkSuppressed(!process.env.SAFARI && currentAppColorScheme.value === 'dark')
   }
 
   function toggleDark(e: MouseEvent) {

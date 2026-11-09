@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 
-import Input from '~/components/Input.vue'
 import Radio from '~/components/Radio.vue'
 import Select from '~/components/Select.vue'
 import { useConfirmDialog } from '~/composables/useConfirmDialog'
@@ -12,69 +11,18 @@ import SettingsItem from '../../components/SettingsItem.vue'
 import SettingsItemGroup from '../../components/SettingsItemGroup.vue'
 import SettingsSegmentedControl from '../../components/SettingsSegmentedControl.vue'
 import SettingsToggleTag from '../../components/SettingsToggleTag.vue'
+import MomentFilterSettings from './MomentFilterSettings.vue'
 import WantedUsersManager from './WantedUsersManager.vue'
 
 const { t } = useI18n()
 const { confirm: showConfirmDialog } = useConfirmDialog()
 
-type MomentToggleSetting
-  = | 'originalMomentsShowUserCard'
-    | 'originalMomentsShowLiveList'
-    | 'originalMomentsShowCommunityCenter'
-    | 'originalMomentsShowHotSearch'
-    | 'originalMomentsShowUpList'
-    | 'momentsSidebarShowUserCard'
-    | 'momentsSidebarShowPublish'
-    | 'momentsSidebarShowLive'
-    | 'momentsSidebarShowHotSearch'
-    | 'momentsShowUpList'
-    | 'momentsFilterUpRecommendation'
-    | 'momentsHideChargeExclusive'
-    | 'momentsHideVideoReservation'
-    | 'momentsHideLiveReservation'
-    | 'momentsHideLiveDynamics'
-    | 'momentsHideVideoDynamics'
-    | 'momentsHideDrawDynamics'
-    | 'momentsHideUgcSeasonDynamics'
-    | 'momentsHideForwardDynamics'
-    | 'momentsHidePgcDynamics'
-    | 'momentsHideArticleDynamics'
-
-interface MomentTagOption {
-  setting: MomentToggleSetting
-  label: string
-  labelKey?: string
-  icon: string
-}
-
-const originalComponentOptions = computed<MomentTagOption[]>(() => [
-  { setting: 'originalMomentsShowUserCard', label: t('settings.original_moments_show_user_card'), labelKey: 'settings.original_moments_show_user_card', icon: 'i-tabler-user-square-rounded' },
-  { setting: 'originalMomentsShowLiveList', label: t('settings.original_moments_show_live_list'), icon: 'i-tabler-live-photo' },
-  { setting: 'originalMomentsShowCommunityCenter', label: t('settings.original_moments_show_community_center'), icon: 'i-tabler-layout-dashboard' },
-  { setting: 'originalMomentsShowHotSearch', label: t('settings.original_moments_show_hot_search'), labelKey: 'settings.original_moments_show_hot_search', icon: 'i-tabler-flame' },
-  { setting: 'originalMomentsShowUpList', label: t('settings.original_moments_show_up_list'), icon: 'i-tabler-users' },
-])
-
-const pluginComponentOptions = computed<MomentTagOption[]>(() => [
-  { setting: 'momentsSidebarShowUserCard', label: t('settings.moments_show_user_card'), labelKey: 'settings.moments_show_user_card', icon: 'i-tabler-user-square-rounded' },
-  { setting: 'momentsSidebarShowPublish', label: t('settings.moments_show_publish'), icon: 'i-tabler-edit' },
-  { setting: 'momentsSidebarShowLive', label: t('settings.moments_show_live'), icon: 'i-tabler-live-photo' },
-  { setting: 'momentsSidebarShowHotSearch', label: t('settings.moments_show_hot_search'), labelKey: 'settings.moments_show_hot_search', icon: 'i-tabler-flame' },
-  { setting: 'momentsShowUpList', label: t('settings.moments_show_up_list'), icon: 'i-tabler-users' },
-])
-
-const pluginFilterOptions = computed<MomentTagOption[]>(() => [
-  { setting: 'momentsHideVideoDynamics', label: t('settings.moments_filter_video_dynamic'), icon: 'i-tabler-player-play' },
-  { setting: 'momentsHideDrawDynamics', label: t('settings.moments_filter_draw_dynamic'), icon: 'i-tabler-photo' },
-  { setting: 'momentsHideUgcSeasonDynamics', label: t('settings.moments_filter_ugc_season_dynamic'), icon: 'i-tabler-stack' },
-  { setting: 'momentsHideForwardDynamics', label: t('settings.moments_filter_forward_dynamic'), icon: 'i-tabler-repeat' },
-  { setting: 'momentsHidePgcDynamics', label: t('settings.moments_filter_pgc_dynamic'), icon: 'i-tabler-device-tv' },
-  { setting: 'momentsHideArticleDynamics', label: t('settings.moments_filter_article_dynamic'), icon: 'i-tabler-news' },
-  { setting: 'momentsFilterUpRecommendation', label: t('settings.moments_filter_up_recommendation_short'), icon: 'i-tabler-sparkles' },
-  { setting: 'momentsHideChargeExclusive', label: t('settings.moments_filter_charge_dynamic'), icon: 'i-tabler-battery-charging' },
-  { setting: 'momentsHideVideoReservation', label: t('settings.moments_filter_video_reservation'), icon: 'i-tabler-calendar-time' },
-  { setting: 'momentsHideLiveReservation', label: t('settings.moments_filter_live_reservation'), icon: 'i-tabler-calendar-event' },
-  { setting: 'momentsHideLiveDynamics', label: t('settings.moments_filter_live_dynamic'), icon: 'i-tabler-broadcast' },
+const pluginComponentOptions = computed(() => [
+  { setting: 'momentsSidebarShowUserCard' as const, label: t('settings.moments_show_user_card'), labelKey: 'settings.moments_show_user_card', icon: 'i-tabler-user-square-rounded' },
+  { setting: 'momentsSidebarShowPublish' as const, label: t('settings.moments_show_publish'), labelKey: undefined, icon: 'i-tabler-edit' },
+  { setting: 'momentsSidebarShowLive' as const, label: t('settings.moments_show_live'), labelKey: undefined, icon: 'i-tabler-live-photo' },
+  { setting: 'momentsSidebarShowHotSearch' as const, label: t('settings.moments_show_hot_search'), labelKey: 'settings.moments_show_hot_search', icon: 'i-tabler-flame' },
+  { setting: 'momentsShowUpList' as const, label: t('settings.moments_show_up_list'), labelKey: undefined, icon: 'i-tabler-users' },
 ])
 
 const openModeOptions = computed(() => [
@@ -250,85 +198,15 @@ const momentsTabsPositionOptions = computed<{ label: string, value: TabsPosition
       </SettingsItem>
     </SettingsItemGroup>
 
-    <SettingsItemGroup :title="$t('settings.group_original_moments_page')">
+    <MomentFilterSettings>
       <SettingsItem
-        :title="$t('settings.moments_visible_components')"
-        :desc="$t('settings.moments_visible_components_original_desc')"
-      >
-        <template #bottom>
-          <div class="moment-setting-tags" role="group" :aria-label="$t('settings.moments_visible_components')">
-            <SettingsToggleTag
-              v-for="option in originalComponentOptions"
-              :key="option.setting"
-              v-model="settings[option.setting]"
-              :label="option.label"
-              :icon="option.icon"
-              :data-settings-key="option.labelKey"
-            />
-          </div>
-        </template>
-      </SettingsItem>
-      <SettingsItem
-        :title="$t('settings.original_moments_show_fold_comments_button')"
-        :desc="$t('settings.original_moments_show_fold_comments_button_desc')"
+        :title="$t('settings.moments_show_filter_entry')"
+        :desc="$t('settings.moments_show_filter_entry_desc')"
         right-width="auto"
       >
-        <Radio v-model="settings.originalMomentsShowFoldCommentsButton" />
+        <Radio v-model="settings.momentsShowFilterEntry" />
       </SettingsItem>
-      <SettingsItem
-        :title="$t('settings.original_moments_click_blank_to_fold_comments')"
-        :desc="$t('settings.original_moments_click_blank_to_fold_comments_desc')"
-        right-width="auto"
-      >
-        <Radio v-model="settings.originalMomentsClickBlankToFoldComments" />
-      </SettingsItem>
-    </SettingsItemGroup>
-
-    <SettingsItemGroup :title="$t('settings.group_moments_filters')">
-      <SettingsItem
-        :title="$t('settings.moments_filtered_types')"
-        :desc="$t('settings.moments_filtered_types_desc')"
-      >
-        <template #bottom>
-          <div class="moment-setting-tags moment-setting-tags--filters" role="group" :aria-label="$t('settings.moments_filtered_types')">
-            <SettingsToggleTag
-              v-for="option in pluginFilterOptions"
-              :key="option.setting"
-              v-model="settings[option.setting]"
-              :label="option.label"
-              :icon="option.icon"
-              inverted
-              :show-state-icon="false"
-            />
-          </div>
-        </template>
-      </SettingsItem>
-      <SettingsItem
-        :title="$t('settings.moments_keyword_filter')"
-        :desc="$t('settings.moments_keyword_filter_desc')"
-        right-width="auto"
-      >
-        <div
-          class="moment-keyword-filter"
-          :class="{ 'moment-keyword-filter--enabled': settings.momentsEnableKeywordFilter }"
-        >
-          <Input
-            v-if="settings.momentsEnableKeywordFilter"
-            v-model="settings.momentsBlockedKeywords"
-            :placeholder="$t('settings.moments_keyword_filter_placeholder')"
-            class="moment-keyword-filter__input"
-          />
-          <Radio v-model="settings.momentsEnableKeywordFilter" />
-        </div>
-      </SettingsItem>
-      <SettingsItem
-        :title="$t('settings.original_moments_use_bewly_filters')"
-        :desc="$t('settings.original_moments_use_bewly_filters_desc')"
-        right-width="auto"
-      >
-        <Radio v-model="settings.originalMomentsUseBewlyFilters" />
-      </SettingsItem>
-    </SettingsItemGroup>
+    </MomentFilterSettings>
 
     <SettingsItemGroup
       :title="$t('settings.group_moments_wanted_users')"
@@ -368,27 +246,5 @@ const momentsTabsPositionOptions = computed<{ label: string, value: TabsPosition
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-
-.moment-keyword-filter {
-  display: flex;
-  gap: var(--bew-space-2);
-  align-items: center;
-  justify-content: flex-end;
-
-  &--enabled {
-    width: min(360px, 40vw);
-  }
-
-  &__input {
-    flex: 1;
-    min-width: 0;
-  }
-}
-
-@media (max-width: 640px) {
-  .moment-keyword-filter--enabled {
-    width: min(280px, 48vw);
-  }
 }
 </style>

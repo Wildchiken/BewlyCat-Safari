@@ -2,6 +2,7 @@ import UnoCSS from 'unocss/vite'
 import { defineConfig } from 'vite'
 
 import packageJson from './package.json'
+import { embedSafariInjectSource } from './scripts/safariInject'
 import { thirdPartyLicensesVitePlugin } from './scripts/thirdPartyLicenses'
 import { embedBundledStyles, watchLocaleFiles } from './scripts/uiBundlePlugins'
 import { isDev, isFirefox, isSafari, r } from './scripts/utils'
@@ -14,6 +15,7 @@ export default defineConfig({
     UnoCSS(),
     ...sharedConfig.plugins!,
     embedBundledStyles(),
+    embedSafariInjectSource(),
     watchLocaleFiles(),
     thirdPartyLicensesVitePlugin('content'),
   ],

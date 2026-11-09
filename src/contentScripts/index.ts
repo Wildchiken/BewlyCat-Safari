@@ -120,19 +120,26 @@ if (shouldInitializeContentScript) {
 const isFirefox: boolean = /Firefox/i.test(navigator.userAgent)
 const isElectronEnv = isElectron()
 
-// Safari 不支持 manifest 中 content_scripts 的 `world: 'MAIN'`，改为由 content script
-// 读取 inject 脚本源码后以内联 <script> 注入页面上下文（外链 src 会多一次异步加载）。
+// Safari 不支持 manifest 中 content_scripts 的 `world: 'MAIN'`。构建时 inject 源码已嵌入本脚本
+// （见 scripts/safariInject.ts），此处在 document_start 同步插入内联 <script>，保证先于 B 站脚本执行。
 // eslint-disable-next-line node/prefer-global/process
 if (process.env.SAFARI && shouldInitializeContentScript) {
-  fetch(browser.runtime.getURL('dist/contentScripts/inject.global.js'))
-    .then(response => response.text())
-    .then((source) => {
-      const script = document.createElement('script')
-      script.textContent = source
-      ;(document.head || document.documentElement).appendChild(script)
-      script.remove()
-    })
-    .catch(error => console.error('[BewlyCat] Failed to load inject script for Safari:', error))
+  const injectPageScript = (source: string) => {
+    const script = document.createElement('script')
+    script.textContent = source
+    ;(document.head || document.documentElement).appendChild(script)
+    script.remove()
+  }
+  const embeddedSource = (globalThis as { __BEWLYCAT_SAFARI_INJECT_SOURCE__?: string }).__BEWLYCAT_SAFARI_INJECT_SOURCE__
+  if (typeof embeddedSource === 'string') {
+    injectPageScript(embeddedSource)
+  }
+  else {
+    fetch(browser.runtime.getURL('dist/contentScripts/inject.global.js'))
+      .then(response => response.text())
+      .then(injectPageScript)
+      .catch(error => console.error('[BewlyCat] Failed to load inject script for Safari:', error))
+  }
 }
 
 // 多语言页面（如 /ja/history）按去掉语言段后的路径匹配支持页面

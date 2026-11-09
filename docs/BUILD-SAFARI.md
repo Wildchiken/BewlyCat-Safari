@@ -57,16 +57,15 @@ xcrun safari-web-extension-converter ./extension-safari \
 本项目已针对 Safari 做了以下适配：
 
 ### ✅ 已适配
-- **`world: 'MAIN'` 不支持** → content script 读取 `inject.global.js` 后以内联 `<script>` 注入页面上下文；inject 会回补注入前已注册的评论组件
+- **`world: 'MAIN'` 不支持** → 构建时把 `inject.global.js` 嵌入内容脚本（`scripts/safariInject.ts`），在 `document_start` 同步以内联 `<script>` 注入页面上下文，时机与其他浏览器一致
 - **`scripting` 权限** → Safari 构建不申请，也不依赖 `scripting.executeScript`
 - **后台请求 Cookie** → 按目标接口地址读取 Cookie 并随请求附带（Safari 无容器）
 - **移动端跳转拦截** → 同时使用 `declarativeNetRequest` 动态规则与 `webRequest` 监听，任一生效即可
-- **评论区文字颜色** → Safari 中为评论正文、用户名、富文本补充主题文字色
+- **评论区等 B 站组件的深色模式** → Shadow DOM 内拿不到插件主题变量；深色模式下把 `<html>` 上已解析的变量写成字面值，挂到所有 `bili-*` 组件的 `:host`
 - **`storage.sync` 需要 iCloud** → 未登录 iCloud 时开启云同步会失败并自动回滚开关，导入设置不受影响
 
 ### ⚠️ 已知限制
 - **`storage.sync` (iCloud)**：未登录 iCloud 时无法使用设置云同步，其他功能不受影响
-- **inject 脚本时机**：注入为异步，略晚于 Chrome/Firefox 的 `document_start` MAIN world 注入
 - **扩展更新**：未签名扩展需要手动替换文件夹；Xcode 打包的版本需要重新构建分发
 
 ### 🔧 故障排除

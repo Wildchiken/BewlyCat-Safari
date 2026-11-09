@@ -17,7 +17,7 @@
     "dev:options": "pnpm run build:options -- --mode development",
     "dev:bg": "tsup --watch ./src",
     "build": "cross-env NODE_ENV=production run-s --npm-path pnpm clear build:prepare build:js build:inject build:options build:bg",
-    "build-safari": "cross-env NODE_ENV=production SAFARI=true run-s --npm-path pnpm clear-safari build:prepare build:js build:inject build:options build:bg",
+    "build-safari": "cross-env NODE_ENV=production SAFARI=true run-s --npm-path pnpm clear-safari build:prepare build:inject build:js build:options build:bg",
     "build-firefox": "cross-env NODE_ENV=production FIREFOX=true run-s --npm-path pnpm clear-firefox build:prepare build:js build:inject build:options build:bg",
     "build:prepare": "esno scripts/prepare.ts",
     "build:js": "vite build --config vite.config.content.ts",

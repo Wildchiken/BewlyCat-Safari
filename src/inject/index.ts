@@ -752,6 +752,109 @@ else if (shouldInitializePageScript) {
       ensureCommentShadowStyle(root, SAFARI_COMMENT_THEME_STYLE_ID, css)
   }
 
+  // Safari 中 B 站 Web Components 的 Shadow DOM 拿不到页面上的插件主题变量，深色模式下回落到浅色值（黑字）。
+  // 深色模式时把 <html> 上已解析的自定义属性写成字面值，经共享样式表挂到所有 bili-* 组件的 :host。
+  function installSafariShadowThemeVariables() {
+    const sheet = new CSSStyleSheet()
+    const isBiliHost = (root: ShadowRoot) => root.host.localName.startsWith('bili-')
+
+    function buildCss() {
+      if (!document.documentElement.classList.contains('dark'))
+        return ''
+      const style = getComputedStyle(document.documentElement)
+      const declarations: string[] = []
+      for (let i = 0; i < style.length; i++) {
+        const name = style[i]
+        if (!name.startsWith('--'))
+          continue
+        const value = style.getPropertyValue(name).trim()
+        if (value && !/[{};]/.test(value))
+          declarations.push(`${name}: ${value} !important;`)
+      }
+      return declarations.length ? `:host { ${declarations.join(' ')} }` : ''
+    }
+
+    let lastCss: string | undefined
+    let refreshScheduled = false
+    function refresh() {
+      refreshScheduled = false
+      const css = buildCss()
+      if (css === lastCss)
+        return
+      lastCss = css
+      sheet.replaceSync(css)
+    }
+    function scheduleRefresh() {
+      if (refreshScheduled)
+        return
+      refreshScheduled = true
+      requestAnimationFrame(refresh)
+    }
+
+    const adoptedDescriptor = Object.getOwnPropertyDescriptor(ShadowRoot.prototype, 'adoptedStyleSheets')
+      ?? Object.getOwnPropertyDescriptor(Document.prototype, 'adoptedStyleSheets')
+    if (!adoptedDescriptor?.get || !adoptedDescriptor.set)
+      return
+    const getAdopted = adoptedDescriptor.get
+    const setAdopted = adoptedDescriptor.set
+
+    function adopt(root: ShadowRoot) {
+      const sheets: CSSStyleSheet[] = getAdopted.call(root)
+      if (!sheets.includes(sheet))
+        setAdopted.call(root, [...sheets, sheet])
+    }
+
+    // Lit 会整体重设 adoptedStyleSheets，因此在赋值时始终把共享样式表放在末尾。
+    Object.defineProperty(ShadowRoot.prototype, 'adoptedStyleSheets', {
+      configurable: true,
+      enumerable: adoptedDescriptor.enumerable,
+      get() {
+        return getAdopted.call(this)
+      },
+      set(value: CSSStyleSheet[]) {
+        const sheets = [...value]
+        if (isBiliHost(this) && !sheets.includes(sheet))
+          sheets.push(sheet)
+        setAdopted.call(this, sheets)
+      },
+    })
+
+    const originalAttachShadow = Element.prototype.attachShadow
+    Element.prototype.attachShadow = function (this: Element, init: ShadowRootInit) {
+      const root = originalAttachShadow.call(this, init)
+      if (isBiliHost(root))
+        adopt(root)
+      return root
+    }
+
+    // 页面脚本在 Safari 中异步注入，回补注入前已创建的组件。
+    ;(function adoptExisting(root: Document | ShadowRoot) {
+      for (const element of Array.from(root.querySelectorAll('*'))) {
+        const shadowRoot = element.shadowRoot
+        if (!shadowRoot)
+          continue
+        if (isBiliHost(shadowRoot))
+          adopt(shadowRoot)
+        adoptExisting(shadowRoot)
+      }
+    })(document)
+
+    refresh()
+    // 主题、主题色和深色基准色变化都会改写 <html> 的 class 或 style。
+    new MutationObserver(scheduleRefresh).observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'] })
+    // 插件样式表加载完成前算出的值可能不完整，加载后再刷新一次。
+    window.addEventListener('load', scheduleRefresh, { once: true })
+  }
+
+  if (isSafariBuild) {
+    try {
+      installSafariShadowThemeVariables()
+    }
+    catch (error) {
+      console.warn('[BewlyCat] Failed to install Safari shadow theme variables.', error)
+    }
+  }
+
   function updateWidescreenCommentEmojiOverflow(component: HTMLElement, root: ShadowRoot) {
     const emojiPopover = root.querySelector<HTMLElement>('#emoji-popover')
     const emojiPickerOpen = (component as HTMLElement & { showEmojiPicker?: boolean }).showEmojiPicker === true
